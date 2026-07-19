@@ -1,0 +1,6 @@
+{
+  "name": "Système de Gestion",
+  "description": "Système de gestion complet avec architecture 3 tiers (React JS, API REST, PostgreSQL).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
