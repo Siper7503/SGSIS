@@ -6,7 +6,6 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /api/health
-    preDeployCommand: npm run db:push
     envVars:
       - key: NODE_ENV
         value: production
