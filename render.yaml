@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: infra-scolaires-app
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    preDeployCommand: npm run db:push
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: infra-scolaires-db
+          property: connectionString
+
+databases:
+  - name: infra-scolaires-db
+    databaseName: infra_scolaires
+    user: infra_scolaires
+    postgresMajorVersion: "16"
