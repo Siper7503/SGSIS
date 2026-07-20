@@ -2,7 +2,7 @@ services:
   - type: web
     name: infra-scolaires-app
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: .
     dockerCommand: node dist/server.cjs
@@ -25,4 +25,5 @@ databases:
   - name: infra-scolaires-db
     databaseName: infra_scolaires
     user: infra_scolaires
+    plan: free
     postgresMajorVersion: "16"
