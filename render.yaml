@@ -5,7 +5,7 @@ services:
     plan: starter
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    dockerCommand: sh -c "npm run db:push && npm start"
+    dockerCommand: node dist/server.cjs
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV

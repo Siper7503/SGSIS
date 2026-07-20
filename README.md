@@ -54,8 +54,18 @@ This repository includes `render.yaml` for a Docker web service plus Render Post
 1. Push the repository to GitHub/GitLab/Bitbucket.
 2. In Render, create a new Blueprint from this repository.
 3. Set `GEMINI_API_KEY` and `APP_URL` in the Render dashboard.
-4. Render builds the Docker image, runs `npm run db:push` as the pre-deploy command, then starts `npm start`.
+4. Render builds the Docker image and starts the server with `node dist/server.cjs`.
 
-The included `render.yaml` uses a paid `starter` web service because Render pre-deploy commands are available for paid web services.
-3. Run the app:
-   `npm run dev`
+### Database schema (manual job)
+
+The schema push is **not** part of the startup command. `drizzle-kit push` is interactive:
+it prompts for confirmation on destructive changes, and in a container without a TTY it
+hangs forever — the server never binds a port and Render kills it with SIGTERM.
+
+Run it manually from the Render shell after a deploy that changes `src/db/schema.ts`:
+
+```bash
+npm run db:push
+```
+
+Review the statements it prints before confirming, especially any `DROP`.

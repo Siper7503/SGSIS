@@ -2803,4 +2803,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error("Échec du démarrage du serveur:", error);
+  process.exit(1);
+});
