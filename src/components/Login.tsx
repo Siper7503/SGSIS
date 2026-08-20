@@ -293,7 +293,9 @@ export function Login() {
                 <Building2 className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-black tracking-tight text-slate-950">SGSIED</h1>
+                <h1 className="text-base sm:text-lg font-black tracking-tight text-slate-950 leading-tight">
+                  SGSIS de la Commune de Ouagadougou
+                </h1>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Burkina Faso</p>
               </div>
             </div>
@@ -722,7 +724,7 @@ export function Login() {
                   ) : authMode === 'register' ? (
                     'Valider l\'inscription & Générer mon Jeton'
                   ) : (
-                    'Se connecter au SGSIED'
+                    'Se connecter au SGSIS'
                   )}
                 </button>
               </div>

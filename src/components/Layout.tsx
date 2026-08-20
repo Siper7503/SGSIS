@@ -183,7 +183,9 @@ export function Layout() {
         <div className="flex h-16 shrink-0 items-center px-6 border-b border-gray-100 justify-between">
           <div className="flex items-center">
             <Building2 className="h-6 w-6 text-blue-600 mr-3" />
-            <span className="text-lg font-bold text-gray-900 tracking-tight">SGSIED</span>
+            <span className="text-sm font-bold text-gray-900 tracking-tight leading-tight">
+              SGSIS de la Commune de Ouagadougou
+            </span>
           </div>
           <button className="md:hidden" onClick={() => setMobileMenuOpen(false)}>
             <X className="h-6 w-6 text-gray-500" />
@@ -291,7 +293,9 @@ export function Layout() {
         <div className="md:hidden flex items-center justify-between bg-white border-b border-gray-200 px-4 py-3 shrink-0">
           <div className="flex items-center">
             <Building2 className="h-6 w-6 text-blue-600 mr-2" />
-            <span className="text-lg font-bold text-gray-900 tracking-tight">SGSIED</span>
+            <span className="text-sm font-bold text-gray-900 tracking-tight leading-tight">
+              SGSIS de la Commune de Ouagadougou
+            </span>
           </div>
           <button onClick={() => setMobileMenuOpen(true)}>
             <Menu className="h-6 w-6 text-gray-500" />
