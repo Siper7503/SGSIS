@@ -6,7 +6,7 @@ import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { getOrCreateUser } from "./src/db/users.ts";
 import { db } from "./src/db/index.ts";
 import { etablissements, effectifs, constructions, infrastructures, mobilier, communications, communicationReceipts, incidents, wash, tice, auditLogs, users } from "./src/db/schema.ts";
-import { eq, and, ilike, ne } from "drizzle-orm";
+import { eq, and, ilike, ne, sql } from "drizzle-orm";
 import multer from "multer";
 import * as xlsx from "xlsx";
 import Papa from "papaparse";
@@ -160,9 +160,14 @@ function filterUsersForRequester(allUsers: any[], requester: AuthRequest["user"]
   return [];
 }
 
+async function ensureDatabaseShape() {
+  await db.execute(sql`alter table users add column if not exists lock_expires_at timestamp`);
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
+  await ensureDatabaseShape();
 
   // Initialize Gemini
   let ai: GoogleGenAI | null = null;
