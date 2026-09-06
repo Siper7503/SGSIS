@@ -15,6 +15,7 @@ export const users = pgTable('users', {
   accessToken: text('access_token'),
   loginAttempts: integer('login_attempts').notNull().default(0),
   isLocked: boolean('is_locked').notNull().default(false),
+  lockExpiresAt: timestamp('lock_expires_at'),
   otpCode: text('otp_code'),
   otpExpiresAt: timestamp('otp_expires_at'),
   createdAt: timestamp('created_at').defaultNow(),

@@ -169,6 +169,7 @@ export function Login() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Une erreur est survenue lors de la récupération.");
         
+        addSimulatedEmail(data.simulatedEmail);
         setSuccessMessage("Méthode de récupération activée avec succès ! Votre jeton d'accès sécurisé a été généré et envoyé à votre email simulé (voir panneau de droite).");
         setAuthMode('login');
         setLoginMode('token');
@@ -196,6 +197,7 @@ export function Login() {
         }
 
         if (data.requires2FA) {
+          addSimulatedEmail(data.simulatedEmail);
           setStep('2fa');
           setSuccessMessage("Double facteur (2FA) requis. Un code OTP à 6 chiffres a été simulé dans la console de votre serveur Express.");
         } else {
@@ -231,6 +233,7 @@ export function Login() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Erreur lors de la création du compte.");
         
+        addSimulatedEmail(data.simulatedEmail);
         setSuccessMessage(`Félicitations, votre compte sécurisé a été créé ! Un jeton d'accès réutilisable (${data.accessToken}) vous a été envoyé par email. Veuillez vous connecter.`);
         setAuthMode('login');
       }
@@ -245,6 +248,15 @@ export function Login() {
     navigator.clipboard.writeText(text);
     setCopiedToken(id);
     setTimeout(() => setCopiedToken(null), 2000);
+  };
+
+  const addSimulatedEmail = (message: any) => {
+    if (!message) return;
+    setSimulatedEmails((items) => [
+      message,
+      ...items.filter((item) => item.id !== message.id)
+    ]);
+    setSelectedEmail(message);
   };
 
   const handleBackToLogin = () => {
@@ -791,7 +803,7 @@ export function Login() {
               ) : (
                 simulatedEmails.map((item) => {
                   // Attempt to extract token or OTP code from body if present
-                  const tokenMatch = item.body.match(/SGSIED-[A-Z0-9]+-[0-9]+/);
+                  const tokenMatch = item.body.match(/SGSIED-[A-Za-z0-9_-]+/);
                   const otpMatch = item.body.match(/Code OTP SMS\s*:\s*(\d{6})/);
                   const parsedToken = tokenMatch ? tokenMatch[0] : (otpMatch ? otpMatch[1] : null);
                   const isOtp = !!otpMatch;

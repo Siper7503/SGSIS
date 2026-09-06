@@ -25,6 +25,9 @@ interface SimulatedEmail {
 }
 
 const simulatedEmails: SimulatedEmail[] = [];
+const MAX_LOGIN_ATTEMPTS = 5;
+const AUTO_LOCK_MINUTES = 10;
+const AUTO_LOCK_MS = AUTO_LOCK_MINUTES * 60 * 1000;
 
 const DISPOSABLE_DOMAINS = [
   "yopmail.com", "tempmail.com", "mailinator.com", "10minutemail.com", 
@@ -305,6 +308,7 @@ async function startServer() {
           rights,
           accessToken: hashSecret(accessToken),
           arrondissement: arrondissement || null,
+          lockExpiresAt: null,
         }).where(eq(users.email, email)).returning();
       } else {
         const uid = "custom_" + Math.random().toString(36).substring(2, 15);
@@ -320,7 +324,8 @@ async function startServer() {
           arrondissement: arrondissement || null,
           passwordHash: hash,
           loginAttempts: 0,
-          isLocked: false
+          isLocked: false,
+          lockExpiresAt: null
         }).returning();
       }
 
@@ -337,19 +342,21 @@ async function startServer() {
       const emailSubject = "Bienvenue sur SGSIED - Votre jeton d'accès sécurisé";
       const emailBody = `Bonjour ${prenom} ${nom},\n\nVotre compte d'accès sécurisé SGSIED en tant que "${role}" a été créé avec succès.\n\nLe système vous a attribué automatiquement le droit de contrôle suivant :\n👉 ${rights}\n\nVoici votre jeton de sécurité à conserver précieusement pour vos futures authentifications d'accès ou récupérations :\n🔑 Code d'accès : ${accessToken}\n\nVous pouvez utiliser ce code comme alternative à votre mot de passe pour vous connecter.\n\nCordialement,\nL'administration SGSIED Burkina Faso.`;
       
-      simulatedEmails.unshift({
+      const simulatedEmail = {
         id: "em_" + Math.random().toString(36).substring(2, 9),
         to: email,
         subject: emailSubject,
         body: emailBody,
         sentAt: new Date().toISOString()
-      });
+      };
+      simulatedEmails.unshift(simulatedEmail);
 
       res.json({ 
         success: true, 
         user: userResult[0],
         rights,
         accessToken,
+        simulatedEmail,
         message: "Compte créé avec succès ! Votre jeton d'accès sécurisé a été généré automatiquement et envoyé par email." 
       });
     } catch (error: any) {
@@ -381,35 +388,45 @@ async function startServer() {
       }
 
       const user = usersFound[0];
-      const maxAttempts = hasAnyRole(user.role, MANAGEMENT_ROLES) ? 3 : 5;
+      const maxAttempts = MAX_LOGIN_ATTEMPTS;
+      const now = new Date();
       let isSuccess = false;
 
       // 1. Vérifier si le compte est bloqué
       if (user.isLocked || user.loginAttempts >= maxAttempts) {
-        // If they are logging in with their correct accessToken (recovery token), let them in and unlock!
-        if (accessToken && secretsMatch(accessToken, user.accessToken)) {
-          isSuccess = true;
-          const newAccessToken = createOneTimeToken();
-          await db.update(users).set({ 
-            accessToken: hashSecret(newAccessToken),
+        const lockExpiresAt = user.lockExpiresAt ? new Date(user.lockExpiresAt) : null;
+
+        if (lockExpiresAt && lockExpiresAt <= now) {
+          await db.update(users).set({
             isLocked: false,
-            loginAttempts: 0
+            loginAttempts: 0,
+            lockExpiresAt: null
           }).where(eq(users.id, user.id));
+          user.isLocked = false;
+          user.loginAttempts = 0;
+          user.lockExpiresAt = null;
         } else {
-          if (!user.isLocked) {
-            await db.update(users).set({ isLocked: true }).where(eq(users.id, user.id));
+          let effectiveLockExpiresAt = lockExpiresAt;
+          if (!effectiveLockExpiresAt) {
+            effectiveLockExpiresAt = new Date(Date.now() + AUTO_LOCK_MS);
+            await db.update(users).set({
+              isLocked: true,
+              lockExpiresAt: effectiveLockExpiresAt
+            }).where(eq(users.id, user.id));
           }
+
+          const remainingMinutes = Math.max(1, Math.ceil((effectiveLockExpiresAt.getTime() - Date.now()) / 60000));
 
           await db.insert(auditLogs).values({
             userId: user.id,
             action: "CONNEXION_REFUSEE_BLOQUE",
             entityType: "users",
             entityId: user.id,
-            details: { email, reason: "Compte verrouillé pour échecs multiples" }
+            details: { email, reason: "Compte verrouille pour echecs multiples", lockExpiresAt: effectiveLockExpiresAt }
           });
 
           res.status(403).json({ 
-            error: `Votre compte est bloqué suite à ${maxAttempts} échecs consécutifs de connexion. Veuillez contacter l'administrateur DSE pour déverrouiller votre accès ou utiliser votre jeton de sécurité temporaire reçu par email.` 
+            error: `Votre compte est bloque suite a ${maxAttempts} echecs consecutifs de connexion. Veuillez patienter ${remainingMinutes} minute(s) avant de reessayer.` 
           });
           return;
         }
@@ -426,15 +443,18 @@ async function startServer() {
             await db.update(users).set({ 
               accessToken: hashSecret(newAccessToken),
               isLocked: false,
-              loginAttempts: 0
+              loginAttempts: 0,
+              lockExpiresAt: null
             }).where(eq(users.id, user.id));
           } else {
             const newAttempts = user.loginAttempts + 1;
             const shouldLock = newAttempts >= maxAttempts;
+            const lockExpiresAt = shouldLock ? new Date(Date.now() + AUTO_LOCK_MS) : null;
 
             await db.update(users).set({ 
               loginAttempts: newAttempts,
-              isLocked: shouldLock
+              isLocked: shouldLock,
+              lockExpiresAt
             }).where(eq(users.id, user.id));
 
             await db.insert(auditLogs).values({
@@ -442,11 +462,11 @@ async function startServer() {
               action: shouldLock ? "COMPTE_VERROUILLE" : "ECHEC_CONNEXION_TOKEN",
               entityType: "users",
               entityId: user.id,
-              details: { email, attempts: newAttempts, locked: shouldLock }
+              details: { email, attempts: newAttempts, locked: shouldLock, lockExpiresAt }
             });
 
             if (shouldLock) {
-              res.status(403).json({ error: `Votre compte a été bloqué après ${maxAttempts} échecs de sécurité consécutifs.` });
+              res.status(403).json({ error: `Votre compte a ete bloque apres ${maxAttempts} echecs de securite consecutifs. Veuillez patienter ${AUTO_LOCK_MINUTES} minutes avant de reessayer.` });
             } else {
               res.status(401).json({ error: `Jeton de sécurité incorrect. Tentative ${newAttempts}/${maxAttempts}.` });
             }
@@ -469,10 +489,12 @@ async function startServer() {
         if (!match) {
           const newAttempts = user.loginAttempts + 1;
           const shouldLock = newAttempts >= maxAttempts;
+          const lockExpiresAt = shouldLock ? new Date(Date.now() + AUTO_LOCK_MS) : null;
 
           await db.update(users).set({ 
             loginAttempts: newAttempts,
-            isLocked: shouldLock
+            isLocked: shouldLock,
+            lockExpiresAt
           }).where(eq(users.id, user.id));
 
           await db.insert(auditLogs).values({
@@ -480,11 +502,11 @@ async function startServer() {
             action: shouldLock ? "COMPTE_VERROUILLE" : "ECHEC_CONNEXION_PASS",
             entityType: "users",
             entityId: user.id,
-            details: { email, attempts: newAttempts, locked: shouldLock }
+            details: { email, attempts: newAttempts, locked: shouldLock, lockExpiresAt }
           });
 
           if (shouldLock) {
-            res.status(403).json({ error: `Votre compte a été bloqué après ${maxAttempts} échecs de sécurité consécutifs.` });
+            res.status(403).json({ error: `Votre compte a ete bloque apres ${maxAttempts} echecs de securite consecutifs. Veuillez patienter ${AUTO_LOCK_MINUTES} minutes avant de reessayer.` });
           } else {
             res.status(401).json({ error: `Mot de passe incorrect. Tentative ${newAttempts}/${maxAttempts}.` });
           }
@@ -494,7 +516,7 @@ async function startServer() {
       }
 
       // 3. Réinitialiser le compteur d'échecs en cas de succès
-      await db.update(users).set({ loginAttempts: 0 }).where(eq(users.id, user.id));
+      await db.update(users).set({ loginAttempts: 0, lockExpiresAt: null }).where(eq(users.id, user.id));
 
       // 4. Vérifier si le profil requiert la 2FA (Uniquement pour Admin DSE, Directeur DSE et Responsable d'Arrondissement, en cas de connexion par mot de passe)
       const requires2FA = (
@@ -520,17 +542,19 @@ async function startServer() {
 
         console.log(`\n=========================================\n[SMS OTP 2FA] Code envoyé au mobile de ${user.email} (${user.role}) : ${otpCode}\n=========================================\n`);
 
-        simulatedEmails.unshift({
+        const simulatedEmail = {
           id: "em_" + Math.random().toString(36).substring(2, 9),
           to: user.email,
           subject: "🔑 [SMS OTP] Votre code de sécurité double facteur (2FA)",
           body: `Bonjour ${user.prenom || ''} ${user.nom || ''},\n\nUn code de sécurité à 6 chiffres a été généré pour valider votre connexion en double facteur (2FA) sur SGSIED.\n\n📱 Code OTP SMS : ${otpCode}\n\nCe code est valable pendant 5 minutes. Ne le partagez jamais.\n\nCordialement,\nL'administration SGSIED Burkina Faso.`,
           sentAt: new Date().toISOString()
-        });
+        };
+        simulatedEmails.unshift(simulatedEmail);
 
         res.json({ 
           requires2FA: true, 
           email: user.email,
+          simulatedEmail,
           message: "Un code OTP additionnel de double facteur a été généré et envoyé par SMS." 
         });
         return;
@@ -711,16 +735,18 @@ async function startServer() {
       const emailSubject = "Récupération de compte SGSIED - Votre Jeton de Sécurité";
       const emailBody = `Bonjour ${user.prenom || ''} ${user.nom || ''},\n\nVous avez demandé la récupération de votre compte d'accès SGSIED.\n\nVoici votre jeton de code de sécurité réutilisable à saisir lors de votre connexion :\n🔑 Jeton d'accès : ${tokenToUse}\n\nVous pouvez utiliser ce jeton de code directement sur notre formulaire de connexion alternative pour accéder de nouveau à votre session.\n\nCordialement,\nLa Direction du Suivi des Établissements (DSE).`;
 
-      simulatedEmails.unshift({
+      const simulatedEmail = {
         id: "em_" + Math.random().toString(36).substring(2, 9),
         to: email,
         subject: emailSubject,
         body: emailBody,
         sentAt: new Date().toISOString()
-      });
+      };
+      simulatedEmails.unshift(simulatedEmail);
 
       res.json({
         success: true,
+        simulatedEmail,
         message: "Un email de récupération avec votre jeton de sécurité a été envoyé à votre adresse email."
       });
     } catch (error: any) {
@@ -768,7 +794,8 @@ async function startServer() {
         isLocked: false,
         loginAttempts: 0,
         otpCode: null,
-        otpExpiresAt: null
+        otpExpiresAt: null,
+        lockExpiresAt: null
       }).where(eq(users.id, targetId)).returning();
 
       if (updated.length === 0) {
@@ -907,7 +934,8 @@ async function startServer() {
         arrondissement: arrondissement || null,
         passwordHash: hash,
         loginAttempts: 0,
-        isLocked: false
+        isLocked: false,
+        lockExpiresAt: null
       }).returning();
 
       // Log in audit log
