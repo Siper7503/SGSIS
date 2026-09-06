@@ -73,13 +73,7 @@ export function Login() {
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const rolesList = [
-    ROLES.ADMIN_DSE,
-    ROLES.DIRECTEUR_DSE,
-    ROLES.DIRECTEUR_ECOLE,
-    ROLES.PROVISEUR,
-    ROLES.SECRETAIRE_ADMIN,
-    ROLES.RESPONSABLE_ARR,
-    ROLES.VISITEUR
+    ROLES.SUPER_ADMIN
   ];
 
   // Validate email in real-time as the user types
@@ -658,10 +652,10 @@ export function Login() {
                           ))}
                         </select>
                         <div className="mt-1.5 p-2 bg-slate-50 border border-slate-100 rounded-lg text-[10px] text-slate-500 font-medium">
-                          {role === "Administrateur DSE" || role === "Directeur DSE" ? (
+                          {role === ROLES.SUPER_ADMIN ? (
                             <span className="text-cyan-800 font-semibold flex items-center">
                               <ShieldCheck className="h-3 w-3 mr-1 text-cyan-700" />
-                              Droit attribué d'office : pilotage complet du système (lecture, écriture, recherche)
+                              Droit attribué d'office : super administration, gestion des accès et audit global
                             </span>
                           ) : role === "utilisateur lambda(visiteur)" ? (
                             <span className="text-amber-700 font-semibold flex items-center">

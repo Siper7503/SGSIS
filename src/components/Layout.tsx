@@ -5,7 +5,7 @@ import { Login } from './Login.tsx';
 import { Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Briefcase, Map as MapIcon, Sparkles, Menu, X, WifiOff, AlertTriangle, Droplets, Monitor, ShieldAlert } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { getQueuedActions, syncData } from '../lib/sync.ts';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 const navigation = [
   { name: 'Tableau de bord', href: '/', icon: Home },
@@ -88,7 +88,8 @@ export function Layout() {
   // Route Protection: Redirect or block unauthorized access
   const currentPath = location.pathname;
   const role = user?.role;
-  const isSuperAdmin = hasAnyRole(role, DSE_ROLES);
+  const isSuperAdmin = hasAnyRole(role, SUPER_ADMIN_ROLES);
+  const isDseAdmin = hasAnyRole(role, DSE_ROLES);
   const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
   const isArrondissementResp = hasAnyRole(role, ARRONDISSEMENT_ROLES);
 
@@ -113,7 +114,7 @@ export function Layout() {
     );
   }
 
-  if (isArrondissementResp && !['/', '/mobilier'].includes(currentPath)) {
+  if (isArrondissementResp && !['/', '/admin', '/mobilier', '/carte', '/rapports'].includes(currentPath)) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -134,7 +135,49 @@ export function Layout() {
     );
   }
 
-  if (!isSuperAdmin && !isLocalActor && !isArrondissementResp && ['/admin', '/audit', '/predictions'].includes(currentPath)) {
+  if (!isSuperAdmin && !isDseAdmin && currentPath === '/predictions') {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
+        <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
+          <div className="h-12 w-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <ShieldAlert className="h-6 w-6" />
+          </div>
+          <h2 className="text-lg font-bold text-gray-900">AccÃ¨s RÃ©servÃ©</h2>
+          <p className="text-sm text-gray-500 mt-2">
+            Le module <code>{currentPath}</code> est rÃ©servÃ© au Directeur DSE et au SuperAdmin.
+          </p>
+          <div className="mt-6">
+            <Link to="/" className="inline-flex items-center justify-center rounded-xl bg-blue-600 text-white px-4 py-2 text-sm font-bold shadow-sm hover:bg-blue-700 transition">
+              Retour au tableau de bord
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isSuperAdmin && currentPath === '/audit') {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
+        <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
+          <div className="h-12 w-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <ShieldAlert className="h-6 w-6" />
+          </div>
+          <h2 className="text-lg font-bold text-gray-900">AccÃ¨s RÃ©servÃ©</h2>
+          <p className="text-sm text-gray-500 mt-2">
+            Le journal d'audit global est rÃ©servÃ© au SuperAdmin.
+          </p>
+          <div className="mt-6">
+            <Link to="/" className="inline-flex items-center justify-center rounded-xl bg-blue-600 text-white px-4 py-2 text-sm font-bold shadow-sm hover:bg-blue-700 transition">
+              Retour au tableau de bord
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isSuperAdmin && !isDseAdmin && !isArrondissementResp && currentPath === '/admin') {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -158,22 +201,25 @@ export function Layout() {
   const SidebarContent = () => {
     // Determine user roles
     const userRole = user?.role;
-    const isSuper = hasAnyRole(userRole, DSE_ROLES);
+    const isSuper = hasAnyRole(userRole, SUPER_ADMIN_ROLES);
+    const isDse = hasAnyRole(userRole, DSE_ROLES);
     const isLocal = hasAnyRole(userRole, LOCAL_SCHOOL_ROLES);
     const isArrondissementResp = hasAnyRole(userRole, ARRONDISSEMENT_ROLES);
 
     // Filter navigation based on role privileges
     const filteredNavigation = navigation.filter((item) => {
       if (isSuper) {
-        return true; // Interface 1 sees everything
+        return ['/', '/admin', '/audit', '/carte', '/rapports'].includes(item.href);
+      }
+      if (isDse) {
+        return item.href !== '/audit';
       }
       if (isLocal) {
         // Interface 2 only sees Dashboard, M1, M2, M3, M6
         return ['/', '/etablissements', '/infrastructures', '/effectifs', '/communications'].includes(item.href);
       }
       if (isArrondissementResp) {
-        // Responsable d'arrondissement only sees Dashboard and Mobilier (M4)
-        return ['/', '/mobilier'].includes(item.href);
+        return ['/', '/admin', '/mobilier', '/carte', '/rapports'].includes(item.href);
       }
       // Interface 3 (Observer/Lambda) sees everything except Admin (M8), Audit logs and predictions
       return !['/admin', '/audit', '/predictions'].includes(item.href);

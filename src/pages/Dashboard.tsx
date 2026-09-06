@@ -17,6 +17,8 @@ import {
   Clock,
   Briefcase,
   FileText,
+  FileSpreadsheet,
+  Printer,
   Mail,
   Shield,
   ArrowRight,
@@ -53,7 +55,56 @@ import {
   Pie, 
   Cell
 } from 'recharts';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, hasAnyRole } from '../lib/roles.ts';
+import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
+import * as XLSX from 'xlsx';
+
+interface SchoolSummary {
+  ecoles: number;
+  classes: number;
+  enseignants: number;
+  filles: number;
+  garcons: number;
+  eleves: number;
+}
+
+interface AnnualSchoolReport {
+  anneeScolaire: string;
+  primary: {
+    public: SchoolSummary;
+    prive: SchoolSummary;
+    total: SchoolSummary;
+    byArrondissement: Array<{
+      arrondissement: string;
+      public: SchoolSummary;
+      prive: SchoolSummary;
+      total: SchoolSummary;
+    }>;
+  };
+  secondary: {
+    total: SchoolSummary;
+    rows: Array<{
+      etablissementId: number;
+      nomEtablissement: string;
+      arrondissement: string;
+      classes: number;
+      filles: number;
+      garcons: number;
+      eleves: number;
+      enseignants: number;
+    }>;
+  };
+  cep?: {
+    source?: string;
+    avecCandidatsLibres?: CepSummary;
+    sansCandidatsLibres?: CepSummary;
+  };
+}
+
+interface CepSummary {
+  presents: { filles: number; garcons: number; total: number };
+  admis: { filles: number; garcons: number; total: number };
+  taux: { filles: number; garcons: number; total: number; province: number };
+}
 
 interface DashboardStats {
   totalEtablissements: number;
@@ -106,11 +157,12 @@ interface DashboardStats {
     enCours: number;
     resolu: number;
   };
+  annualSchoolReport?: AnnualSchoolReport;
 }
 
 export default function Dashboard() {
   const { token, user } = useAuth();
-  const isDseAdmin = hasAnyRole(user?.role, [ROLES.ADMIN_DSE]);
+  const isTechnicalSuperAdmin = hasAnyRole(user?.role, SUPER_ADMIN_ROLES);
 
   // General Stats State
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -132,7 +184,7 @@ export default function Dashboard() {
   const [newNom, setNewNom] = useState('');
   const [newPrenom, setNewPrenom] = useState('');
   const [newTelephone, setNewTelephone] = useState('');
-  const [newRole, setNewRole] = useState<string>(ROLES.DIRECTEUR_ECOLE);
+  const [newRole, setNewRole] = useState<string>(ROLES.DIRECTEUR_DSE);
   const [newArrondissement, setNewArrondissement] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -140,13 +192,8 @@ export default function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
 
   const rolesList = [
-    ROLES.ADMIN_DSE,
     ROLES.DIRECTEUR_DSE,
-    ROLES.DIRECTEUR_ECOLE,
-    ROLES.PROVISEUR,
-    ROLES.SECRETAIRE_ADMIN,
-    ROLES.RESPONSABLE_ARR,
-    ROLES.VISITEUR
+    ROLES.RESPONSABLE_ARR
   ];
 
   // Cantine & WASH Direct Saisie States
@@ -421,7 +468,7 @@ export default function Dashboard() {
     async function fetchStats() {
       if (!token) return;
 
-      if (isDseAdmin) {
+      if (isTechnicalSuperAdmin) {
         setLoading(true);
         await fetchAdminData();
         setLoading(false);
@@ -451,7 +498,7 @@ export default function Dashboard() {
       }
     }
     fetchStats();
-  }, [token, isDseAdmin, user?.role]);
+  }, [token, isTechnicalSuperAdmin, user?.role]);
 
   // Handle Lock
   const handleLockUser = async (userId: number) => {
@@ -598,7 +645,7 @@ export default function Dashboard() {
       setNewPrenom('');
       setNewTelephone('');
       setNewPassword('');
-      setNewRole(ROLES.DIRECTEUR_ECOLE);
+      setNewRole(ROLES.DIRECTEUR_DSE);
       setNewArrondissement('');
       setShowAddForm(false);
       
@@ -621,7 +668,7 @@ export default function Dashboard() {
     );
   }
 
-  if (!isDseAdmin && (error || !stats)) {
+  if (!isTechnicalSuperAdmin && (error || !stats)) {
     return (
       <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-md text-sm">
         Une erreur est survenue lors du chargement des statistiques du tableau de bord.
@@ -631,9 +678,9 @@ export default function Dashboard() {
 
   // Identify Dashboard Interface Group
   const role = user?.role;
-  const isSuperAdmin = hasAnyRole(role, DSE_ROLES);
+  const isDseDirector = hasAnyRole(role, DSE_ROLES);
   const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
-  const isObserver = !isSuperAdmin && !isLocalActor;
+  const isObserver = !isDseDirector && !isLocalActor;
 
   // Pre-process conformite data for PieChart
   const conformiteData = stats ? [
@@ -677,10 +724,103 @@ export default function Dashboard() {
     ? Math.round((stats!.conformiteCounts.conforme / totalConformityEvaluated) * 100) 
     : 0;
 
+  const annualReport = stats?.annualSchoolReport;
+  const formatNumber = (value: number | null | undefined) => Number(value || 0).toLocaleString('fr-FR');
+
+  const summaryToRow = (label: string, item: SchoolSummary) => ({
+    Rubrique: label,
+    Ecoles: item.ecoles,
+    Classes: item.classes,
+    Enseignants: item.enseignants,
+    Filles: item.filles,
+    Garcons: item.garcons,
+    Total: item.eleves
+  });
+
+  const exportAnnualSchoolReportExcel = () => {
+    if (!annualReport) return;
+
+    const workbook = XLSX.utils.book_new();
+    const primaryRows = [
+      summaryToRow('Primaire public', annualReport.primary.public),
+      summaryToRow('Primaire prive', annualReport.primary.prive),
+      summaryToRow('Total primaire', annualReport.primary.total),
+      ...annualReport.primary.byArrondissement.map(row => ({
+        Arrondissement: row.arrondissement,
+        'Ecoles publiques': row.public.ecoles,
+        'Classes publiques': row.public.classes,
+        'Enseignants public': row.public.enseignants,
+        'Filles public': row.public.filles,
+        'Garcons public': row.public.garcons,
+        'Total public': row.public.eleves,
+        'Ecoles privees': row.prive.ecoles,
+        'Classes privees': row.prive.classes,
+        'Enseignants prive': row.prive.enseignants,
+        'Filles prive': row.prive.filles,
+        'Garcons prive': row.prive.garcons,
+        'Total prive': row.prive.eleves,
+        'Total general': row.total.eleves
+      }))
+    ];
+
+    const secondaryRows = [
+      summaryToRow('Total secondaire municipal', annualReport.secondary.total),
+      ...annualReport.secondary.rows.map(row => ({
+        Etablissement: row.nomEtablissement,
+        Arrondissement: row.arrondissement,
+        Classes: row.classes,
+        Enseignants: row.enseignants,
+        Filles: row.filles,
+        Garcons: row.garcons,
+        Total: row.eleves
+      }))
+    ];
+
+    const cepRows = annualReport.cep ? [
+      {
+        Rubrique: 'Avec candidats libres',
+        'Présentes filles': annualReport.cep.avecCandidatsLibres?.presents.filles || 0,
+        'Présents garçons': annualReport.cep.avecCandidatsLibres?.presents.garcons || 0,
+        'Présents total': annualReport.cep.avecCandidatsLibres?.presents.total || 0,
+        'Admises filles': annualReport.cep.avecCandidatsLibres?.admis.filles || 0,
+        'Admis garçons': annualReport.cep.avecCandidatsLibres?.admis.garcons || 0,
+        'Admis total': annualReport.cep.avecCandidatsLibres?.admis.total || 0,
+        'Taux filles': annualReport.cep.avecCandidatsLibres?.taux.filles || 0,
+        'Taux garçons': annualReport.cep.avecCandidatsLibres?.taux.garcons || 0,
+        'Taux total': annualReport.cep.avecCandidatsLibres?.taux.total || 0,
+        'Taux province': annualReport.cep.avecCandidatsLibres?.taux.province || 0
+      },
+      {
+        Rubrique: 'Sans candidats libres',
+        'Présentes filles': annualReport.cep.sansCandidatsLibres?.presents.filles || 0,
+        'Présents garçons': annualReport.cep.sansCandidatsLibres?.presents.garcons || 0,
+        'Présents total': annualReport.cep.sansCandidatsLibres?.presents.total || 0,
+        'Admises filles': annualReport.cep.sansCandidatsLibres?.admis.filles || 0,
+        'Admis garçons': annualReport.cep.sansCandidatsLibres?.admis.garcons || 0,
+        'Admis total': annualReport.cep.sansCandidatsLibres?.admis.total || 0,
+        'Taux filles': annualReport.cep.sansCandidatsLibres?.taux.filles || 0,
+        'Taux garçons': annualReport.cep.sansCandidatsLibres?.taux.garcons || 0,
+        'Taux total': annualReport.cep.sansCandidatsLibres?.taux.total || 0,
+        'Taux province': annualReport.cep.sansCandidatsLibres?.taux.province || 0
+      }
+    ] : [];
+
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(primaryRows), 'Primaire');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(secondaryRows), 'Secondaire');
+    if (cepRows.length > 0) {
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(cepRows), 'CEP 2026');
+    }
+    XLSX.writeFile(workbook, `Synthese_scolaire_${annualReport.anneeScolaire}.xlsx`);
+  };
+
+  const printAnnualSchoolReport = () => {
+    window.print();
+  };
+
   // -------------------------------------------------------------
   // VIEW 0: INTERFACE ADMINISTRATEUR SYSTÈME DSE (Custom Security Dashboard)
   // -------------------------------------------------------------
-  if (isDseAdmin) {
+  if (isTechnicalSuperAdmin) {
     const filteredUsers = adminUsers.filter(u => {
       const fullName = `${u.prenom || ''} ${u.nom || ''}`.toLowerCase();
       const email = (u.email || '').toLowerCase();
@@ -1059,7 +1199,7 @@ export default function Dashboard() {
 
                         {/* Actions block/unlock/delete */}
                         <div className="flex items-center gap-2">
-                          {user?.email !== u.email && (
+                          {user?.email !== u.email && !hasAnyRole(u.role, SUPER_ADMIN_ROLES) && (
                             <>
                               {u.isLocked ? (
                                 <button
@@ -2067,6 +2207,21 @@ export default function Dashboard() {
   // -------------------------------------------------------------
   return (
     <div className="space-y-8 animate-fade-in pb-10">
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #annual-school-report, #annual-school-report * { visibility: visible; }
+          #annual-school-report {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            padding: 24px;
+            background: white;
+          }
+          .no-print { display: none !important; }
+        }
+      `}</style>
       {/* Welcome header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-gray-100 pb-5">
         <div>
@@ -2085,6 +2240,177 @@ export default function Dashboard() {
           </span>
         </div>
       </div>
+
+      {annualReport && (
+        <section id="annual-school-report" className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-5 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-3 py-1">
+                <FileText className="h-3.5 w-3.5" />
+                Rapport annuel DSE
+              </div>
+              <h2 className="mt-3 text-xl font-extrabold text-gray-900">
+                Synthèse des données scolaires {annualReport.anneeScolaire}
+              </h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Vue consolidée des écoles primaires et établissements secondaires municipaux renseignés dans SGSIS.
+              </p>
+            </div>
+            <div className="no-print flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={exportAnnualSchoolReportExcel}
+                className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+              >
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Excel
+              </button>
+              <button
+                type="button"
+                onClick={printAnnualSchoolReport}
+                className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                PDF
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-gray-100">
+            {[
+              { label: 'Primaire public', value: annualReport.primary.public },
+              { label: 'Primaire privé', value: annualReport.primary.prive },
+              { label: 'Total primaire', value: annualReport.primary.total }
+            ].map(item => (
+              <div key={item.label} className="p-5">
+                <p className="text-sm font-bold text-gray-900">{item.label}</p>
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase font-semibold">Écoles</p>
+                    <p className="text-lg font-black text-gray-900">{formatNumber(item.value.ecoles)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase font-semibold">Classes</p>
+                    <p className="text-lg font-black text-gray-900">{formatNumber(item.value.classes)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase font-semibold">Enseignants</p>
+                    <p className="text-lg font-black text-gray-900">{formatNumber(item.value.enseignants)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase font-semibold">Élèves</p>
+                    <p className="text-lg font-black text-gray-900">{formatNumber(item.value.eleves)}</p>
+                  </div>
+                </div>
+                <p className="mt-3 text-xs text-gray-500">
+                  Filles : <span className="font-bold text-gray-700">{formatNumber(item.value.filles)}</span> • Garçons : <span className="font-bold text-gray-700">{formatNumber(item.value.garcons)}</span>
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="p-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div className="overflow-x-auto">
+              <h3 className="text-sm font-bold text-gray-900 mb-3">Primaire par arrondissement</h3>
+              <table className="min-w-full divide-y divide-gray-200 text-xs">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-semibold text-gray-600">Arrondissement</th>
+                    <th className="px-3 py-2 text-right font-semibold text-gray-600">Public</th>
+                    <th className="px-3 py-2 text-right font-semibold text-gray-600">Privé</th>
+                    <th className="px-3 py-2 text-right font-semibold text-gray-600">Élèves</th>
+                    <th className="px-3 py-2 text-right font-semibold text-gray-600">Classes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {annualReport.primary.byArrondissement.map(row => (
+                    <tr key={row.arrondissement}>
+                      <td className="px-3 py-2 font-medium text-gray-800">{row.arrondissement}</td>
+                      <td className="px-3 py-2 text-right text-gray-600">{formatNumber(row.public.ecoles)}</td>
+                      <td className="px-3 py-2 text-right text-gray-600">{formatNumber(row.prive.ecoles)}</td>
+                      <td className="px-3 py-2 text-right text-gray-900 font-semibold">{formatNumber(row.total.eleves)}</td>
+                      <td className="px-3 py-2 text-right text-gray-600">{formatNumber(row.total.classes)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="overflow-x-auto">
+              <h3 className="text-sm font-bold text-gray-900 mb-3">Établissements secondaires municipaux</h3>
+              <table className="min-w-full divide-y divide-gray-200 text-xs">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-semibold text-gray-600">Établissement</th>
+                    <th className="px-3 py-2 text-right font-semibold text-gray-600">Classes</th>
+                    <th className="px-3 py-2 text-right font-semibold text-gray-600">Enseignants</th>
+                    <th className="px-3 py-2 text-right font-semibold text-gray-600">Filles</th>
+                    <th className="px-3 py-2 text-right font-semibold text-gray-600">Garçons</th>
+                    <th className="px-3 py-2 text-right font-semibold text-gray-600">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {annualReport.secondary.rows.slice(0, 12).map(row => (
+                    <tr key={row.etablissementId}>
+                      <td className="px-3 py-2 font-medium text-gray-800">{row.nomEtablissement}</td>
+                      <td className="px-3 py-2 text-right text-gray-600">{formatNumber(row.classes)}</td>
+                      <td className="px-3 py-2 text-right text-gray-600">{formatNumber(row.enseignants)}</td>
+                      <td className="px-3 py-2 text-right text-gray-600">{formatNumber(row.filles)}</td>
+                      <td className="px-3 py-2 text-right text-gray-600">{formatNumber(row.garcons)}</td>
+                      <td className="px-3 py-2 text-right text-gray-900 font-semibold">{formatNumber(row.eleves)}</td>
+                    </tr>
+                  ))}
+                  {annualReport.secondary.rows.length > 12 && (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-2 text-center text-gray-500">
+                        {annualReport.secondary.rows.length - 12} autres lignes disponibles dans l'export Excel.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {annualReport.cep && (
+            <div className="mx-6 mb-6 rounded-lg border border-cyan-100 bg-cyan-50 p-4">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <h3 className="text-sm font-bold text-cyan-950">Résultats CEP 2026</h3>
+                <span className="text-xs font-semibold text-cyan-700">{annualReport.cep.source}</span>
+              </div>
+              <div className="mt-3 overflow-x-auto">
+                <table className="min-w-full divide-y divide-cyan-100 text-xs">
+                  <thead>
+                    <tr className="text-cyan-900">
+                      <th className="px-3 py-2 text-left font-semibold">Rubrique</th>
+                      <th className="px-3 py-2 text-right font-semibold">Présents</th>
+                      <th className="px-3 py-2 text-right font-semibold">Admis</th>
+                      <th className="px-3 py-2 text-right font-semibold">Taux filles</th>
+                      <th className="px-3 py-2 text-right font-semibold">Taux garçons</th>
+                      <th className="px-3 py-2 text-right font-semibold">Taux total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-cyan-100 bg-white">
+                    {[
+                      { label: 'Avec candidats libres', value: annualReport.cep.avecCandidatsLibres },
+                      { label: 'Sans candidats libres', value: annualReport.cep.sansCandidatsLibres }
+                    ].map(row => row.value && (
+                      <tr key={row.label}>
+                        <td className="px-3 py-2 font-semibold text-gray-800">{row.label}</td>
+                        <td className="px-3 py-2 text-right text-gray-700">{formatNumber(row.value.presents.total)}</td>
+                        <td className="px-3 py-2 text-right text-gray-700">{formatNumber(row.value.admis.total)}</td>
+                        <td className="px-3 py-2 text-right text-gray-700">{row.value.taux.filles.toFixed(2)}%</td>
+                        <td className="px-3 py-2 text-right text-gray-700">{row.value.taux.garcons.toFixed(2)}%</td>
+                        <td className="px-3 py-2 text-right font-bold text-gray-900">{row.value.taux.total.toFixed(2)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Numerical Indicators Grid */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">

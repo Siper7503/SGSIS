@@ -13,7 +13,7 @@ import Papa from "papaparse";
 import { GoogleGenAI } from "@google/genai";
 import bcrypt from "bcryptjs";
 import { createOneTimeToken, hashSecret, secretsMatch, signSession } from "./src/lib/auth-security.ts";
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SCHOOL_WRITE_ROLES, hasAnyRole } from "./src/lib/roles.ts";
+import { ADMIN_MANAGED_ROLES, ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, MANAGEMENT_ROLES, ROLES, SCHOOL_USER_ROLES, SCHOOL_WRITE_ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from "./src/lib/roles.ts";
 import { createFacilitiesRouter } from "./src/server/routes/facilities.ts";
 
 interface SimulatedEmail {
@@ -107,6 +107,54 @@ function requireAnyRole(req: AuthRequest, res: express.Response, allowedRoles: r
     return false;
   }
   return true;
+}
+
+function canManageUsers(role?: string | null): boolean {
+  return hasAnyRole(role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES]);
+}
+
+function canCreateTargetRole(managerRole: string | null | undefined, targetRole: string | null | undefined): boolean {
+  if (hasAnyRole(managerRole, SUPER_ADMIN_ROLES)) {
+    return hasAnyRole(targetRole, ADMIN_MANAGED_ROLES);
+  }
+
+  if (hasAnyRole(managerRole, DSE_ROLES)) {
+    return hasAnyRole(targetRole, SCHOOL_USER_ROLES);
+  }
+
+  return false;
+}
+
+function canManageTargetAccount(managerRole: string | null | undefined, targetRole: string | null | undefined): boolean {
+  if (hasAnyRole(targetRole, SUPER_ADMIN_ROLES)) {
+    return false;
+  }
+
+  if (hasAnyRole(managerRole, SUPER_ADMIN_ROLES)) {
+    return hasAnyRole(targetRole, [...SYSTEM_ADMIN_ROLES, ...SCHOOL_USER_ROLES]);
+  }
+
+  if (hasAnyRole(managerRole, DSE_ROLES)) {
+    return hasAnyRole(targetRole, SCHOOL_USER_ROLES);
+  }
+
+  return false;
+}
+
+function filterUsersForRequester(allUsers: any[], requester: AuthRequest["user"]): any[] {
+  if (hasAnyRole(requester?.role, SUPER_ADMIN_ROLES)) {
+    return allUsers;
+  }
+
+  if (hasAnyRole(requester?.role, DSE_ROLES)) {
+    return allUsers.filter((user) => hasAnyRole(user.role, SCHOOL_USER_ROLES));
+  }
+
+  if (hasAnyRole(requester?.role, ARRONDISSEMENT_ROLES)) {
+    return allUsers.filter((user) => user.arrondissement && requester?.arrondissement && user.arrondissement === requester.arrondissement);
+  }
+
+  return [];
 }
 
 async function startServer() {
@@ -220,25 +268,28 @@ async function startServer() {
 
       // 4. Automatic "Droit de contrôle" (Pilotage / Lecture-Ecriture / Lecture-Recherche)
       let rights = "lecture et recherche";
-      if (hasAnyRole(role, DSE_ROLES)) {
-        rights = "pilotage de l'ensemble du système (lecture, ecriture et recherche)";
-      } else if (hasAnyRole(role, [...LOCAL_SCHOOL_ROLES, ...ARRONDISSEMENT_ROLES])) {
-        rights = "lecture, ecriture et recherche";
+      if (hasAnyRole(role, SUPER_ADMIN_ROLES)) {
+        rights = "super administration technique, gestion des droits d'acces et audit global";
+      } else if (hasAnyRole(role, SYSTEM_ADMIN_ROLES)) {
+        rights = "administration metier, pilotage, lecture, ecriture et recherche";
+      } else if (hasAnyRole(role, LOCAL_SCHOOL_ROLES)) {
+        rights = "lecture, ecriture et recherche sur les modules d'etablissement";
       }
 
       // 5. Automatic Secure Token Code generation
       const accessToken = createOneTimeToken();
 
       const existingUsers = await db.select().from(users).where(eq(users.email, email));
+      const allSystemUsers = await db.select().from(users);
 
-      // Limit Administrateur DSE accounts to maximum of 2
-      if (hasAnyRole(role, [ROLES.ADMIN_DSE])) {
-        const admins = await db.select().from(users).where(eq(users.role, ROLES.ADMIN_DSE));
-        const isAlreadyAdmin = existingUsers.length > 0 && hasAnyRole(existingUsers[0].role, [ROLES.ADMIN_DSE]);
-        if (!isAlreadyAdmin && admins.length >= 2) {
-          res.status(400).json({ error: "La limite stricte de deux (02) comptes d'accès Administrateur DSE a été atteinte pour l'ensemble du système." });
-          return;
-        }
+      if (allSystemUsers.length > 0) {
+        res.status(403).json({ error: "Inscription publique fermee. Les comptes doivent etre crees par le SuperAdmin ou le Directeur DSE." });
+        return;
+      }
+
+      if (!hasAnyRole(role, SUPER_ADMIN_ROLES)) {
+        res.status(403).json({ error: "Le premier compte doit etre le SuperAdmin de l'application." });
+        return;
       }
 
       const hash = await bcrypt.hash(password, 10);
@@ -330,7 +381,7 @@ async function startServer() {
       }
 
       const user = usersFound[0];
-      const maxAttempts = user.role === "Administrateur DSE" ? 3 : 5;
+      const maxAttempts = hasAnyRole(user.role, MANAGEMENT_ROLES) ? 3 : 5;
       let isSuccess = false;
 
       // 1. Vérifier si le compte est bloqué
@@ -680,8 +731,8 @@ async function startServer() {
   // Simulated local emails for debugging/sandbox visualization
   app.get("/api/auth/simulated-emails", requireAuth, async (req: AuthRequest, res) => {
     try {
-    if (!hasAnyRole(req.user?.role, [ROLES.ADMIN_DSE])) {
-        res.status(403).json({ error: "Accès réservé à l'administration DSE." });
+      if (!hasAnyRole(req.user?.role, SUPER_ADMIN_ROLES)) {
+        res.status(403).json({ error: "Acces reserve au SuperAdmin." });
         return;
       }
       const { email } = req.query;
@@ -696,14 +747,23 @@ async function startServer() {
     }
   });
 
-  // Admin lock/unlock users (Restricted to Administrateur DSE)
+  // Admin lock/unlock users according to the administration hierarchy.
   app.post("/api/users/unlock/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
-      res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut déverrouiller ou autoriser des comptes." });
+    if (!req.user || !canManageUsers(req.user.role)) {
+      res.status(403).json({ error: "Acces refuse : vous ne pouvez pas deverrouiller ou autoriser ce compte." });
       return;
     }
     try {
       const targetId = parseInt(req.params.id);
+      const targetUsers = await db.select().from(users).where(eq(users.id, targetId));
+      if (targetUsers.length === 0) {
+        res.status(404).json({ error: "Utilisateur non trouvé" });
+        return;
+      }
+      if (!canManageTargetAccount(req.user.role, targetUsers[0].role)) {
+        res.status(403).json({ error: "Acces refuse : vous ne pouvez pas gerer ce compte." });
+        return;
+      }
       const updated = await db.update(users).set({
         isLocked: false,
         loginAttempts: 0,
@@ -731,12 +791,21 @@ async function startServer() {
   });
 
   app.post("/api/users/lock/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
-      res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut bloquer des comptes." });
+    if (!req.user || !canManageUsers(req.user.role)) {
+      res.status(403).json({ error: "Acces refuse : vous ne pouvez pas bloquer ce compte." });
       return;
     }
     try {
       const targetId = parseInt(req.params.id);
+      const targetUsers = await db.select().from(users).where(eq(users.id, targetId));
+      if (targetUsers.length === 0) {
+        res.status(404).json({ error: "Utilisateur non trouvé" });
+        return;
+      }
+      if (!canManageTargetAccount(req.user.role, targetUsers[0].role)) {
+        res.status(403).json({ error: "Acces refuse : vous ne pouvez pas gerer ce compte." });
+        return;
+      }
       const updated = await db.update(users).set({
         isLocked: true
       }).where(eq(users.id, targetId)).returning();
@@ -760,14 +829,19 @@ async function startServer() {
     }
   });
 
-  // Create a new user by Administrateur DSE
+  // Create users according to the administration hierarchy.
   app.post("/api/users", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
-      res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut ajouter de nouveaux utilisateurs." });
+    if (!req.user || !canManageUsers(req.user.role)) {
+      res.status(403).json({ error: "Acces refuse : vous n'avez pas les droits de creation d'utilisateurs." });
       return;
     }
     try {
       const { nom, prenom, email, telephone, password, role, arrondissement } = req.body;
+
+      if (!canCreateTargetRole(req.user.role, role)) {
+        res.status(403).json({ error: "Acces refuse : ce role ne peut pas etre attribue par votre profil." });
+        return;
+      }
 
       // 1. Email validation
       const emailValidation = validateEmailSecured(email);
@@ -806,21 +880,14 @@ async function startServer() {
         return;
       }
 
-      // Limit Administrateur DSE accounts to maximum of 2
-      if (hasAnyRole(role, [ROLES.ADMIN_DSE])) {
-        const admins = await db.select().from(users).where(eq(users.role, ROLES.ADMIN_DSE));
-        if (admins.length >= 2) {
-          res.status(400).json({ error: "La limite stricte de deux (02) comptes d'accès Administrateur DSE a été atteinte pour l'ensemble du système." });
-          return;
-        }
-      }
-
       // 5. Automatic "Droit de contrôle" (Pilotage / Lecture-Ecriture / Lecture-Recherche)
       let rights = "lecture et recherche";
-      if (hasAnyRole(role, DSE_ROLES)) {
-        rights = "pilotage de l'ensemble du système (lecture, ecriture et recherche)";
-      } else if (hasAnyRole(role, [...LOCAL_SCHOOL_ROLES, ...ARRONDISSEMENT_ROLES])) {
-        rights = "lecture, ecriture et recherche";
+      if (hasAnyRole(role, SUPER_ADMIN_ROLES)) {
+        rights = "super administration technique, gestion des droits d'acces et audit global";
+      } else if (hasAnyRole(role, SYSTEM_ADMIN_ROLES)) {
+        rights = "administration metier, pilotage, lecture, ecriture et recherche";
+      } else if (hasAnyRole(role, LOCAL_SCHOOL_ROLES)) {
+        rights = "lecture, ecriture et recherche sur les modules d'etablissement";
       }
 
       // 6. Automatic Secure Token Code generation
@@ -857,7 +924,7 @@ async function startServer() {
         id: "em_" + Math.random().toString(36).substring(2, 9),
         to: email,
         subject: "Création de votre compte SGSIED par l'Administrateur",
-        body: `Bonjour ${prenom} ${nom},\n\nVotre compte d'accès sécurisé SGSIED en tant que "${role}" a été créé avec succès par l'Administrateur DSE.\n\nLe système vous a attribué automatiquement le droit de contrôle suivant :\n👉 ${rights}\n\n🔑 Vos identifiants de connexion :\n📧 Email : ${email}\n🔒 Mot de passe initial : ${password}\n🔑 Jeton d'accès de secours : ${accessToken}\n\nVous pouvez utiliser ce code comme alternative à votre mot de passe pour vous connecter.\n\nCordialement,\nL'administration SGSIED Burkina Faso.`,
+        body: `Bonjour ${prenom} ${nom},\n\nVotre compte d'accès sécurisé SGSIS en tant que "${role}" a été créé avec succès par l'administration habilitée.\n\nLe système vous a attribué automatiquement le droit de contrôle suivant :\n${rights}\n\nVos identifiants de connexion :\nEmail : ${email}\nMot de passe initial : ${password}\nJeton d'accès de secours : ${accessToken}\n\nVous pouvez utiliser ce code comme alternative à votre mot de passe pour vous connecter.\n\nCordialement,\nL'administration SGSIS - Commune de Ouagadougou.`,
         sentAt: new Date().toISOString()
       });
 
@@ -869,8 +936,8 @@ async function startServer() {
 
   // DELETE a user (reject access or delete completely)
   app.delete("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
-      res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut refuser l'accès ou supprimer des utilisateurs." });
+    if (!req.user || !canManageUsers(req.user.role)) {
+      res.status(403).json({ error: "Acces refuse : vous ne pouvez pas supprimer ce compte." });
       return;
     }
     try {
@@ -881,7 +948,7 @@ async function startServer() {
       }
 
       if (req.user.id === targetId) {
-        res.status(400).json({ error: "Sécurité : Vous ne pouvez pas supprimer votre propre compte Administrateur DSE." });
+        res.status(400).json({ error: "Securite : vous ne pouvez pas supprimer votre propre compte." });
         return;
       }
 
@@ -892,6 +959,10 @@ async function startServer() {
       }
 
       const userToDelete = usersFound[0];
+      if (!canManageTargetAccount(req.user.role, userToDelete.role)) {
+        res.status(403).json({ error: "Acces refuse : vous ne pouvez pas supprimer ce compte." });
+        return;
+      }
 
       // Insert audit log before deletion
       await db.insert(auditLogs).values({
@@ -919,8 +990,8 @@ async function startServer() {
 
   // DELETE single audit log
   app.delete("/api/audit-logs/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
-      res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut supprimer des journaux d'audit." });
+    if (!req.user || !hasAnyRole(req.user.role, SUPER_ADMIN_ROLES)) {
+      res.status(403).json({ error: "Acces refuse : seul le SuperAdmin peut supprimer des journaux d'audit." });
       return;
     }
     try {
@@ -938,8 +1009,8 @@ async function startServer() {
 
   // DELETE all audit logs (bulk clear)
   app.delete("/api/audit-logs", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
-      res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut vider les journaux d'audit." });
+    if (!req.user || !hasAnyRole(req.user.role, SUPER_ADMIN_ROLES)) {
+      res.status(403).json({ error: "Acces refuse : seul le SuperAdmin peut vider les journaux d'audit." });
       return;
     }
     try {
@@ -2146,10 +2217,10 @@ async function startServer() {
 
   // Admin: Users
   app.get("/api/users", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : la liste des utilisateurs est réservée à la DSE.")) return;
+    if (!requireAnyRole(req, res, MANAGEMENT_ROLES, "Acces refuse : la liste des utilisateurs est reservee aux administrateurs.")) return;
     try {
       const results = await db.select().from(users).orderBy(users.createdAt);
-      res.json(results);
+      res.json(filterUsersForRequester(results, req.user));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -2451,7 +2522,7 @@ async function startServer() {
 
   // M: Journal d'Audit
   app.get("/api/audit-logs", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : le journal d'audit est réservé à la DSE.")) return;
+    if (!requireAnyRole(req, res, SUPER_ADMIN_ROLES, "Acces refuse : le journal d'audit est reserve au SuperAdmin.")) return;
     try {
       const results = await db.select({
          log: auditLogs,
@@ -2627,6 +2698,111 @@ async function startServer() {
         else if (s.includes('resolu') || s.includes('résolu')) incidentStats.resolu++;
       });
 
+      const latestSchoolYear = filteredEffs
+        .map(ef => ef.anneeScolaire)
+        .filter((year): year is string => Boolean(year))
+        .sort((a, b) => b.localeCompare(a))[0] || "2025-2026";
+
+      const latestEffs = filteredEffs.filter(ef => ef.anneeScolaire === latestSchoolYear);
+      const latestEffByEtab = new Map<number, typeof filteredEffs[number]>();
+      latestEffs.forEach(ef => latestEffByEtab.set(ef.etablissementId, ef));
+
+      const normalizeText = (value?: string | null) => (value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+
+      const countStudyRooms = (etabId: number) => {
+        const infra = filteredInfras.find(item => item.etablissementId === etabId);
+        const rooms = infra?.batimentsEtudes as { total?: number } | null | undefined;
+        return Number(rooms?.total || 0);
+      };
+
+      const buildSchoolSummary = (items: typeof filteredEtabs) => items.reduce((acc, etab) => {
+        const eff = latestEffByEtab.get(etab.id);
+        const filles = eff?.elevesFilles || 0;
+        const garcons = eff?.elevesGarcons || 0;
+
+        acc.ecoles += 1;
+        acc.classes += countStudyRooms(etab.id);
+        acc.enseignants += eff?.enseignants || 0;
+        acc.filles += filles;
+        acc.garcons += garcons;
+        acc.eleves += filles + garcons;
+        return acc;
+      }, {
+        ecoles: 0,
+        classes: 0,
+        enseignants: 0,
+        filles: 0,
+        garcons: 0,
+        eleves: 0
+      });
+
+      const primaryEtabs = filteredEtabs.filter(etab => normalizeText(etab.type).includes('primaire'));
+      const publicPrimaryEtabs = primaryEtabs.filter(etab => normalizeText(etab.statut).includes('public'));
+      const privatePrimaryEtabs = primaryEtabs.filter(etab => {
+        const statut = normalizeText(etab.statut);
+        return statut.includes('prive') || statut.includes('priv');
+      });
+      const secondaryEtabs = filteredEtabs.filter(etab => normalizeText(etab.type).includes('secondaire'));
+
+      const arrondissements = Array.from(new Set(primaryEtabs.map(etab => etab.arrondissement || 'Non renseigne'))).sort((a, b) => a.localeCompare(b, 'fr'));
+      const primaryByArrondissement = arrondissements.map(arrondissement => {
+        const publicItems = publicPrimaryEtabs.filter(etab => (etab.arrondissement || 'Non renseigne') === arrondissement);
+        const privateItems = privatePrimaryEtabs.filter(etab => (etab.arrondissement || 'Non renseigne') === arrondissement);
+        const allItems = primaryEtabs.filter(etab => (etab.arrondissement || 'Non renseigne') === arrondissement);
+        return {
+          arrondissement,
+          public: buildSchoolSummary(publicItems),
+          prive: buildSchoolSummary(privateItems),
+          total: buildSchoolSummary(allItems)
+        };
+      });
+
+      const secondaryRows = secondaryEtabs.map(etab => {
+        const eff = latestEffByEtab.get(etab.id);
+        const filles = eff?.elevesFilles || 0;
+        const garcons = eff?.elevesGarcons || 0;
+        return {
+          etablissementId: etab.id,
+          nomEtablissement: etab.nom,
+          arrondissement: etab.arrondissement,
+          classes: countStudyRooms(etab.id),
+          filles,
+          garcons,
+          eleves: filles + garcons,
+          enseignants: eff?.enseignants || 0
+        };
+      }).sort((a, b) => a.nomEtablissement.localeCompare(b.nomEtablissement, 'fr'));
+
+      const annualSchoolReport = {
+        anneeScolaire: latestSchoolYear,
+        primary: {
+          public: buildSchoolSummary(publicPrimaryEtabs),
+          prive: buildSchoolSummary(privatePrimaryEtabs),
+          total: buildSchoolSummary(primaryEtabs),
+          byArrondissement: primaryByArrondissement
+        },
+        secondary: {
+          total: buildSchoolSummary(secondaryEtabs),
+          rows: secondaryRows
+        },
+        cep: {
+          source: "DONNEES SCOLAIRES 2025-2026",
+          avecCandidatsLibres: {
+            presents: { filles: 29998, garcons: 25716, total: 55714 },
+            admis: { filles: 28634, garcons: 24664, total: 53298 },
+            taux: { filles: 95.45, garcons: 95.91, total: 95.66, province: 95.75 }
+          },
+          sansCandidatsLibres: {
+            presents: { filles: 29075, garcons: 24920, total: 53995 },
+            admis: { filles: 28006, garcons: 24064, total: 52070 },
+            taux: { filles: 96.32, garcons: 96.57, total: 96.43, province: 96.4 }
+          }
+        }
+      };
+
       res.json({
         totalEtablissements,
         conformiteCounts,
@@ -2653,7 +2829,8 @@ async function startServer() {
           totalConnectes,
           countEvaluated: filteredTices.length
         },
-        incidentStats
+        incidentStats,
+        annualSchoolReport
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

@@ -17,7 +17,7 @@ import {
   ShieldAlert, 
   Phone 
 } from 'lucide-react';
-import { ROLES } from '../lib/roles.ts';
+import { DSE_ROLES, SCHOOL_USER_ROLES, SUPER_ADMIN_ROLES, hasAnyRole, ROLES } from '../lib/roles.ts';
 
 export default function Admin() {
   const [data, setData] = useState<any[]>([]);
@@ -38,17 +38,17 @@ export default function Admin() {
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const isDseAdmin = user?.role === "Administrateur DSE";
+  const isSuperAdmin = hasAnyRole(user?.role, SUPER_ADMIN_ROLES);
+  const isDseAdmin = hasAnyRole(user?.role, DSE_ROLES);
+  const canCreateUsers = isSuperAdmin || isDseAdmin;
 
-  const rolesList = [
-    ROLES.ADMIN_DSE,
-    ROLES.DIRECTEUR_DSE,
-    ROLES.DIRECTEUR_ECOLE,
-    ROLES.PROVISEUR,
-    ROLES.SECRETAIRE_ADMIN,
-    ROLES.RESPONSABLE_ARR,
-    ROLES.VISITEUR
-  ];
+  const rolesList = isSuperAdmin
+    ? [ROLES.DIRECTEUR_DSE, ROLES.RESPONSABLE_ARR]
+    : [...SCHOOL_USER_ROLES];
+
+  useEffect(() => {
+    setNewRole(rolesList[0] || ROLES.DIRECTEUR_ECOLE);
+  }, [isSuperAdmin, isDseAdmin]);
 
   const fetchData = async () => {
     if (!token) return;
@@ -150,7 +150,7 @@ export default function Admin() {
       setNewPrenom('');
       setNewTelephone('');
       setNewPassword('');
-      setNewRole(ROLES.DIRECTEUR_ECOLE);
+      setNewRole(rolesList[0] || ROLES.DIRECTEUR_ECOLE);
       setNewArrondissement('');
       setShowAddForm(false);
       
@@ -172,7 +172,7 @@ export default function Admin() {
             Gestion des accès utilisateurs, attribution des droits et sécurisation des comptes de la commune.
           </p>
         </div>
-        {isDseAdmin && (
+        {canCreateUsers && (
           <button
             onClick={() => {
               setShowAddForm(!showAddForm);
@@ -197,20 +197,20 @@ export default function Admin() {
       </div>
 
       {/* Permission restriction warning for other roles */}
-      {!isDseAdmin && (
+      {!canCreateUsers && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex items-start gap-3 shadow-sm">
           <ShieldAlert className="h-6 w-6 text-amber-600 flex-shrink-0 mt-0.5" />
           <div>
             <h3 className="font-bold text-amber-900 text-sm">Droits de gestion restreints</h3>
             <p className="text-xs text-amber-700 mt-1 leading-relaxed">
-              Vous êtes connecté avec le profil <strong>{user?.role}</strong>. L'accès en lecture à la liste est autorisé à des fins de pilotage et d'audit, mais la création d'utilisateurs ainsi que le blocage/déverrouillage de comptes sont des privilèges **exclusivement réservés à l'Administrateur DSE**.
+              Vous êtes connecté avec le profil <strong>{user?.role}</strong>. L'accès en lecture est limité à votre périmètre. La création et la gestion des comptes sont réservées au SuperAdmin et au Directeur DSE.
             </p>
           </div>
         </div>
       )}
 
-      {/* Expandable creation form (Only available for Administrateur DSE) */}
-      {isDseAdmin && showAddForm && (
+      {/* Expandable creation form for authorized administrators */}
+      {canCreateUsers && showAddForm && (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden animate-slide-up">
           <div className="px-6 py-4 bg-slate-50 border-b border-gray-100">
             <h3 className="text-sm font-bold text-slate-800 flex items-center">
@@ -416,10 +416,10 @@ export default function Admin() {
                     </div>
                   </div>
                   
-                  {/* Actions (Lock/Unlock) - ONLY active for Administrateur DSE */}
+                  {/* Actions (Lock/Unlock) for authorized administrators */}
                   <div className="flex items-center gap-2">
-                    {user?.email !== u.email && (
-                      isDseAdmin ? (
+                    {user?.email !== u.email && !hasAnyRole(u.role, SUPER_ADMIN_ROLES) && (
+                      canCreateUsers ? (
                         u.isLocked ? (
                           <button
                             onClick={() => handleUnlockUser(u.id)}
