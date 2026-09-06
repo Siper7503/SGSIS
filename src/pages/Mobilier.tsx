@@ -17,6 +17,7 @@ import {
   Building
 } from 'lucide-react';
 import { MobilierForm } from '../components/MobilierForm.tsx';
+import { ARRONDISSEMENT_ROLES, DSE_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Mobilier() {
   const [data, setData] = useState<any[]>([]);
@@ -123,7 +124,8 @@ export default function Mobilier() {
     };
   });
 
-  const isArrondissementResp = user?.role === "Responsable d'arrondissement" || user?.role === "Responsable d'Arrondissement";
+  const isDse = hasAnyRole(user?.role, DSE_ROLES);
+  const isArrondissementResp = hasAnyRole(user?.role, ARRONDISSEMENT_ROLES);
 
   // Filter enriched data
   const filteredData = enrichedData.filter((item) => {
@@ -388,7 +390,7 @@ export default function Mobilier() {
                 <th scope="col" className="px-3 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider">
                   Niveau d'Urgence
                 </th>
-                {!isArrondissementResp && (
+                {isDse && (
                   <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
                     <span className="sr-only">Actions</span>
                   </th>
@@ -398,13 +400,13 @@ export default function Mobilier() {
             <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan={isArrondissementResp ? 5 : 6} className="py-12 text-center text-sm text-slate-400">
+                  <td colSpan={isDse ? 6 : 5} className="py-12 text-center text-sm text-slate-400">
                     Chargement de l'inventaire et des besoins mobiliers...
                   </td>
                 </tr>
               ) : sortedData.length === 0 ? (
                 <tr>
-                  <td colSpan={isArrondissementResp ? 5 : 6} className="py-12 text-center text-sm text-slate-400">
+                  <td colSpan={isDse ? 6 : 5} className="py-12 text-center text-sm text-slate-400">
                     Aucun établissement trouvé pour ces filtres.
                   </td>
                 </tr>
@@ -484,7 +486,7 @@ export default function Mobilier() {
                     </td>
 
                     {/* Actions dropdown / buttons */}
-                    {!isArrondissementResp && (
+                    {isDse && (
                       <td className="py-4 pl-3 pr-4 text-right text-xs font-bold sm:pr-6">
                         <div className="flex justify-end gap-2.5">
                           

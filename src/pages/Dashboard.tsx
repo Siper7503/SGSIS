@@ -53,6 +53,7 @@ import {
   Pie, 
   Cell
 } from 'recharts';
+import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, hasAnyRole } from '../lib/roles.ts';
 
 interface DashboardStats {
   totalEtablissements: number;
@@ -109,7 +110,7 @@ interface DashboardStats {
 
 export default function Dashboard() {
   const { token, user } = useAuth();
-  const isDseAdmin = user?.role === "Administrateur DSE";
+  const isDseAdmin = hasAnyRole(user?.role, [ROLES.ADMIN_DSE]);
 
   // General Stats State
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -131,7 +132,7 @@ export default function Dashboard() {
   const [newNom, setNewNom] = useState('');
   const [newPrenom, setNewPrenom] = useState('');
   const [newTelephone, setNewTelephone] = useState('');
-  const [newRole, setNewRole] = useState("Directeurs d'école");
+  const [newRole, setNewRole] = useState<string>(ROLES.DIRECTEUR_ECOLE);
   const [newArrondissement, setNewArrondissement] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -139,13 +140,13 @@ export default function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
 
   const rolesList = [
-    "Administrateur DSE",
-    "Directeur DSE",
-    "Directeurs d'école",
-    "Proviseur d'établissement",
-    "Sécretaire Adminstratif",
-    "Responsable d'Arrondissement",
-    "utilisateur lambda(visiteur)"
+    ROLES.ADMIN_DSE,
+    ROLES.DIRECTEUR_DSE,
+    ROLES.DIRECTEUR_ECOLE,
+    ROLES.PROVISEUR,
+    ROLES.SECRETAIRE_ADMIN,
+    ROLES.RESPONSABLE_ARR,
+    ROLES.VISITEUR
   ];
 
   // Cantine & WASH Direct Saisie States
@@ -182,7 +183,7 @@ export default function Dashboard() {
           setCwArrondissement(data.etablissement.arrondissement);
         } else {
           setCwNom('');
-          setCwType(user?.role === "Proviseur d'établissement" ? 'Secondaire' : 'Primaire');
+          setCwType(hasAnyRole(user?.role, [ROLES.PROVISEUR]) ? 'Secondaire' : 'Primaire');
           setCwArrondissement(user?.arrondissement || 'Arrondissement 1');
         }
         
@@ -239,7 +240,7 @@ export default function Dashboard() {
           setInfraArrondissement(data.etablissement.arrondissement);
         } else {
           setInfraNom('');
-          setInfraType(user?.role === "Proviseur d'établissement" ? 'Secondaire' : 'Primaire');
+          setInfraType(hasAnyRole(user?.role, [ROLES.PROVISEUR]) ? 'Secondaire' : 'Primaire');
           setInfraArrondissement(user?.arrondissement || 'Arrondissement 1');
         }
 
@@ -437,7 +438,7 @@ export default function Dashboard() {
         setStats(data);
 
         // Fetch local establishment if the user is a director or proviseur
-        const isLocal = user?.role === "Proviseur d'établissement" || user?.role === "Sécretaire Adminstratif" || user?.role === "Directeurs d'école";
+        const isLocal = hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
         if (isLocal) {
           await fetchMyEtabWash();
           await fetchMyEtabInfra();
@@ -597,7 +598,7 @@ export default function Dashboard() {
       setNewPrenom('');
       setNewTelephone('');
       setNewPassword('');
-      setNewRole("Directeurs d'école");
+      setNewRole(ROLES.DIRECTEUR_ECOLE);
       setNewArrondissement('');
       setShowAddForm(false);
       
@@ -630,8 +631,8 @@ export default function Dashboard() {
 
   // Identify Dashboard Interface Group
   const role = user?.role;
-  const isSuperAdmin = role === "Administrateur DSE" || role === "Directeur DSE";
-  const isLocalActor = role === "Proviseur d'établissement" || role === "Sécretaire Adminstratif" || role === "Directeurs d'école";
+  const isSuperAdmin = hasAnyRole(role, DSE_ROLES);
+  const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
   const isObserver = !isSuperAdmin && !isLocalActor;
 
   // Pre-process conformite data for PieChart
@@ -1862,7 +1863,7 @@ export default function Dashboard() {
   // VIEW 3: INTERFACE CONSULTATIVE (lambda / Responsable d'Arrondissement)
   // -------------------------------------------------------------
   if (isObserver) {
-    const isArrResp = role === "Responsable d'arrondissement" || role === "Responsable d'Arrondissement";
+    const isArrResp = hasAnyRole(role, ARRONDISSEMENT_ROLES);
     return (
       <div className="space-y-8 animate-fade-in pb-10">
         

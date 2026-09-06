@@ -5,6 +5,7 @@ import { Login } from './Login.tsx';
 import { Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Briefcase, Map as MapIcon, Sparkles, Menu, X, WifiOff, AlertTriangle, Droplets, Monitor, ShieldAlert } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { getQueuedActions, syncData } from '../lib/sync.ts';
+import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 const navigation = [
   { name: 'Tableau de bord', href: '/', icon: Home },
@@ -87,9 +88,9 @@ export function Layout() {
   // Route Protection: Redirect or block unauthorized access
   const currentPath = location.pathname;
   const role = user?.role;
-  const isSuperAdmin = role === "Administrateur DSE" || role === "Directeur DSE";
-  const isLocalActor = role === "Proviseur d'établissement" || role === "Sécretaire Adminstratif" || role === "Directeurs d'école";
-  const isArrondissementResp = role === "Responsable d'arrondissement" || role === "Responsable d'Arrondissement";
+  const isSuperAdmin = hasAnyRole(role, DSE_ROLES);
+  const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
+  const isArrondissementResp = hasAnyRole(role, ARRONDISSEMENT_ROLES);
 
   if (isLocalActor && !['/', '/etablissements', '/effectifs', '/communications', '/infrastructures'].includes(currentPath)) {
     return (
@@ -157,9 +158,9 @@ export function Layout() {
   const SidebarContent = () => {
     // Determine user roles
     const userRole = user?.role;
-    const isSuper = userRole === "Administrateur DSE" || userRole === "Directeur DSE";
-    const isLocal = userRole === "Proviseur d'établissement" || userRole === "Sécretaire Adminstratif" || userRole === "Directeurs d'école";
-    const isArrondissementResp = userRole === "Responsable d'arrondissement" || userRole === "Responsable d'Arrondissement";
+    const isSuper = hasAnyRole(userRole, DSE_ROLES);
+    const isLocal = hasAnyRole(userRole, LOCAL_SCHOOL_ROLES);
+    const isArrondissementResp = hasAnyRole(userRole, ARRONDISSEMENT_ROLES);
 
     // Filter navigation based on role privileges
     const filteredNavigation = navigation.filter((item) => {

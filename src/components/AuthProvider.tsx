@@ -25,8 +25,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Load custom secure session on mount if exists
   useEffect(() => {
-    const savedToken = localStorage.getItem('secure_token');
-    const savedUserJson = localStorage.getItem('secure_user');
+    const savedToken = sessionStorage.getItem('secure_token');
+    const savedUserJson = sessionStorage.getItem('secure_user');
     
     if (savedToken && savedUserJson) {
       try {
@@ -37,14 +37,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       } catch (e) {
         console.error("Failed to parse saved user", e);
-        localStorage.removeItem('secure_token');
-        localStorage.removeItem('secure_user');
+        sessionStorage.removeItem('secure_token');
+        sessionStorage.removeItem('secure_user');
       }
     }
 
     // Fallback to Firebase auth if no custom secure session
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (localStorage.getItem('secure_token')) {
+      if (sessionStorage.getItem('secure_token')) {
         // Custom token was set during this mount
         return;
       }
@@ -76,15 +76,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const setSecureSession = (newToken: string, newUser: any) => {
-    localStorage.setItem('secure_token', newToken);
-    localStorage.setItem('secure_user', JSON.stringify(newUser));
+    sessionStorage.setItem('secure_token', newToken);
+    sessionStorage.setItem('secure_user', JSON.stringify(newUser));
     setUser(newUser);
     setToken(newToken);
   };
 
   const logout = async () => {
-    localStorage.removeItem('secure_token');
-    localStorage.removeItem('secure_user');
+    sessionStorage.removeItem('secure_token');
+    sessionStorage.removeItem('secure_user');
     setUser(null);
     setToken(null);
     try {

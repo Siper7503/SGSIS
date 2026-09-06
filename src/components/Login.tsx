@@ -22,6 +22,8 @@ import {
   EyeOff
 } from 'lucide-react';
 import { useAuth } from './AuthProvider.tsx';
+import { ROLES } from '../lib/roles.ts';
+import mairieLogo from '../../assets/mairie-ouagadougou-logo.jpg';
 
 const DISPOSABLE_DOMAINS = [
   "yopmail.com", "tempmail.com", "mailinator.com", "10minutemail.com", 
@@ -46,7 +48,7 @@ export function Login() {
   const [nom, setNom] = useState('');
   const [prenom, setPrenom] = useState('');
   const [telephone, setTelephone] = useState('');
-  const [role, setRole] = useState('Directeur / Proviseur');
+  const [role, setRole] = useState<string>(ROLES.PROVISEUR);
   const [arrondissement, setArrondissement] = useState('');
 
   // 2FA verification step
@@ -71,33 +73,14 @@ export function Login() {
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const rolesList = [
-    "Administrateur DSE",
-    "Directeur DSE",
-    "Directeurs d'école",
-    "Proviseur d'établissement",
-    "Sécretaire Adminstratif",
-    "Responsable d'Arrondissement",
-    "utilisateur lambda(visiteur)"
+    ROLES.ADMIN_DSE,
+    ROLES.DIRECTEUR_DSE,
+    ROLES.DIRECTEUR_ECOLE,
+    ROLES.PROVISEUR,
+    ROLES.SECRETAIRE_ADMIN,
+    ROLES.RESPONSABLE_ARR,
+    ROLES.VISITEUR
   ];
-
-  // Load and refresh simulated emails
-  const fetchSimulatedEmails = async () => {
-    try {
-      const res = await fetch('/api/auth/simulated-emails');
-      if (res.ok) {
-        const data = await res.json();
-        setSimulatedEmails(data);
-      }
-    } catch (e) {
-      console.error("Error loading simulated emails", e);
-    }
-  };
-
-  useEffect(() => {
-    fetchSimulatedEmails();
-    const interval = setInterval(fetchSimulatedEmails, 3000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Validate email in real-time as the user types
   useEffect(() => {
@@ -195,7 +178,6 @@ export function Login() {
         setSuccessMessage("Méthode de récupération activée avec succès ! Votre jeton d'accès sécurisé a été généré et envoyé à votre email simulé (voir panneau de droite).");
         setAuthMode('login');
         setLoginMode('token');
-        fetchSimulatedEmails();
         return;
       }
 
@@ -257,7 +239,6 @@ export function Login() {
         
         setSuccessMessage(`Félicitations, votre compte sécurisé a été créé ! Un jeton d'accès réutilisable (${data.accessToken}) vous a été envoyé par email. Veuillez vous connecter.`);
         setAuthMode('login');
-        fetchSimulatedEmails();
       }
     } catch (err: any) {
       setError(err.message || "Une erreur est survenue lors de l'opération.");
@@ -280,26 +261,53 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 lg:p-8">
-      <div className="w-full max-w-6xl bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[85vh]">
+    <div className="min-h-screen bg-[#e8f7fb] flex flex-col">
+      <header className="shrink-0 border-b border-cyan-200/70 bg-white/85 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-sky-700 text-white shadow-md shadow-cyan-200">
+              <Building2 className="h-8 w-8" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">Commune de Ouagadougou</p>
+              <h1 className="text-base font-black leading-tight text-slate-950 sm:text-xl">
+                Système de Gestion des Infrastructures Scolaires
+              </h1>
+            </div>
+          </div>
+          <img
+            src={mairieLogo}
+            alt="Logo de la Mairie de la Commune de Ouagadougou"
+            className="ml-4 h-16 w-16 shrink-0 rounded-full bg-white object-contain p-1.5 shadow-sm ring-1 ring-amber-200 sm:h-20 sm:w-20"
+          />
+        </div>
+      </header>
+
+      <main className="flex flex-1 items-center justify-center px-4 py-8 lg:px-8">
+      <div className="w-full max-w-6xl overflow-hidden rounded-xl border border-cyan-100 bg-white shadow-2xl shadow-cyan-900/10 grid grid-cols-1 lg:grid-cols-12 min-h-[78vh]">
         
         {/* LEFT COLUMN: AUTHENTICATION FORM WRAPPER (7 cols) */}
         <div className="lg:col-span-7 p-6 sm:p-10 flex flex-col justify-between bg-white relative">
+          <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-emerald-600 via-amber-400 to-sky-600" />
           
           {/* Top Branding Header */}
-          <div className="flex items-center justify-between border-b border-slate-50 pb-4">
+          <div className="flex items-center justify-between border-b border-cyan-100 pb-4 pt-2">
             <div className="flex items-center space-x-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-600 shadow-md shadow-blue-200">
-                <Building2 className="h-6 w-6 text-white" />
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-amber-200">
+                <img
+                  src={mairieLogo}
+                  alt="Mairie de Ouagadougou"
+                  className="h-10 w-10 object-contain"
+                />
               </div>
               <div>
                 <h1 className="text-base sm:text-lg font-black tracking-tight text-slate-950 leading-tight">
                   SGSIS de la Commune de Ouagadougou
                 </h1>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Burkina Faso</p>
+                <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">Burkina Faso</p>
               </div>
             </div>
-            <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600">
+            <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
               <ShieldCheck className="h-3 w-3 mr-1 text-emerald-500" />
               Sécurisé AES-256
             </span>
@@ -363,7 +371,7 @@ export function Login() {
                         maxLength={6}
                         value={otpCode}
                         onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                        className="block w-full rounded-xl border border-slate-200 py-3 pl-10 pr-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm font-semibold tracking-widest text-center"
+                        className="block w-full rounded-lg border border-cyan-100 py-3 pl-10 pr-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm font-semibold tracking-widest text-center"
                         placeholder="Ex: 123456"
                       />
                     </div>
@@ -393,8 +401,8 @@ export function Login() {
                         required
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        className={`block w-full rounded-xl border py-3 pl-10 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm ${
-                          emailWarning ? 'border-rose-300 bg-rose-50/20' : 'border-slate-200'
+                        className={`block w-full rounded-lg border py-3 pl-10 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm ${
+                          emailWarning ? 'border-rose-300 bg-rose-50/20' : 'border-cyan-100'
                         }`}
                         placeholder="Ex: dse.agent@commune.bf"
                       />
@@ -416,7 +424,7 @@ export function Login() {
                           setAuthMode('login');
                           setError(null);
                         }}
-                        className="text-xs font-bold text-blue-600 hover:text-blue-500 flex items-center"
+                        className="text-xs font-bold text-cyan-700 hover:text-cyan-600 flex items-center"
                       >
                         <ArrowLeft className="h-3.5 w-3.5 mr-1" />
                         Retour à la connexion
@@ -436,7 +444,7 @@ export function Login() {
                             setError(null);
                           }}
                           className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
-                            loginMode === 'password' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                            loginMode === 'password' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                           }`}
                         >
                           Mot de passe
@@ -448,7 +456,7 @@ export function Login() {
                             setError(null);
                           }}
                           className={`py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center space-x-1 ${
-                            loginMode === 'token' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                            loginMode === 'token' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                           }`}
                         >
                           <Zap className="h-3 w-3 text-amber-500" />
@@ -471,7 +479,7 @@ export function Login() {
                               required
                               value={password}
                               onChange={(e) => setPassword(e.target.value)}
-                              className="block w-full rounded-xl border border-slate-200 py-3 pl-10 pr-10 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm"
+                              className="block w-full rounded-lg border border-cyan-100 py-3 pl-10 pr-10 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm"
                               placeholder="••••••••"
                             />
                             <button
@@ -502,7 +510,7 @@ export function Login() {
                               required
                               value={accessToken}
                               onChange={(e) => setAccessToken(e.target.value)}
-                              className="block w-full rounded-xl border border-amber-200 bg-amber-50/5 py-3 pl-10 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm font-mono font-bold"
+                              className="block w-full rounded-lg border border-amber-200 bg-amber-50/5 py-3 pl-10 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm font-mono font-bold"
                               placeholder="Ex: SGSIED-XYZ123-456"
                             />
                           </div>
@@ -520,7 +528,7 @@ export function Login() {
                             setAuthMode('register');
                             setError(null);
                           }}
-                          className="font-bold text-blue-600 hover:text-blue-500 transition-colors"
+                          className="font-bold text-cyan-700 hover:text-cyan-600 transition-colors"
                         >
                           Créer un compte d'accès
                         </button>
@@ -557,7 +565,7 @@ export function Login() {
                               required
                               value={prenom}
                               onChange={(e) => setPrenom(e.target.value)}
-                              className="block w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm"
+                              className="block w-full rounded-lg border border-cyan-100 py-2.5 pl-9 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm"
                               placeholder="Ex: Ibrahim"
                             />
                           </div>
@@ -575,7 +583,7 @@ export function Login() {
                               required
                               value={nom}
                               onChange={(e) => setNom(e.target.value)}
-                              className="block w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm"
+                              className="block w-full rounded-lg border border-cyan-100 py-2.5 pl-9 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm"
                               placeholder="Ex: Sawadogo"
                             />
                           </div>
@@ -595,7 +603,7 @@ export function Login() {
                             required
                             value={telephone}
                             onChange={(e) => setTelephone(e.target.value.replace(/\D/g, ''))}
-                            className="block w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm"
+                            className="block w-full rounded-lg border border-cyan-100 py-2.5 pl-9 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm"
                             placeholder="Ex: 70000000"
                           />
                         </div>
@@ -615,7 +623,7 @@ export function Login() {
                             required
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            className="block w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-9 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm"
+                            className="block w-full rounded-lg border border-cyan-100 py-2.5 pl-9 pr-9 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm"
                             placeholder="Ex: Nomprenom@68"
                           />
                           <button
@@ -632,7 +640,7 @@ export function Login() {
                           </button>
                         </div>
                         <p className="mt-1.5 text-[10px] text-slate-400 leading-normal">
-                          <span className="font-semibold text-slate-500">Exigence :</span> Minimum 8 caractères composé d'un ensemble de lettres (majuscule uniquement au début si présente, suivie de minuscules), de signes/symboles et de chiffres. <span className="italic font-medium text-blue-600">(Exemple : Nomprenom@68)</span>
+                          <span className="font-semibold text-slate-500">Exigence :</span> Minimum 8 caractères composé d'un ensemble de lettres (majuscule uniquement au début si présente, suivie de minuscules), de signes/symboles et de chiffres. <span className="italic font-medium text-cyan-700">(Exemple : Nomprenom@68)</span>
                         </p>
                       </div>
 
@@ -643,7 +651,7 @@ export function Login() {
                           id="role"
                           value={role}
                           onChange={(e) => setRole(e.target.value)}
-                          className="block w-full rounded-xl border border-slate-200 py-2.5 px-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm bg-white font-medium"
+                          className="block w-full rounded-lg border border-cyan-100 py-2.5 px-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm bg-white font-medium"
                         >
                           {rolesList.map((r, idx) => (
                             <option key={idx} value={r}>{r}</option>
@@ -651,8 +659,8 @@ export function Login() {
                         </select>
                         <div className="mt-1.5 p-2 bg-slate-50 border border-slate-100 rounded-lg text-[10px] text-slate-500 font-medium">
                           {role === "Administrateur DSE" || role === "Directeur DSE" ? (
-                            <span className="text-blue-700 font-semibold flex items-center">
-                              <ShieldCheck className="h-3 w-3 mr-1 text-blue-600" />
+                            <span className="text-cyan-800 font-semibold flex items-center">
+                              <ShieldCheck className="h-3 w-3 mr-1 text-cyan-700" />
                               Droit attribué d'office : pilotage complet du système (lecture, écriture, recherche)
                             </span>
                           ) : role === "utilisateur lambda(visiteur)" ? (
@@ -676,7 +684,7 @@ export function Login() {
                           id="arrondissement"
                           value={arrondissement}
                           onChange={(e) => setArrondissement(e.target.value)}
-                          className="block w-full rounded-xl border border-slate-200 py-2.5 px-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm bg-white font-medium"
+                          className="block w-full rounded-lg border border-cyan-100 py-2.5 px-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm bg-white font-medium"
                         >
                           <option value="">Sélectionner un arrondissement</option>
                           {Array.from({ length: 12 }, (_, i) => `Arrondissement ${i + 1}`).map((arr) => (
@@ -694,7 +702,7 @@ export function Login() {
                             setAuthMode('login');
                             setError(null);
                           }}
-                          className="font-bold text-blue-600 hover:text-blue-500 underline"
+                          className="font-bold text-cyan-700 hover:text-cyan-600 underline"
                         >
                           Déjà un compte ? Connexion
                         </button>
@@ -710,7 +718,7 @@ export function Login() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="group relative flex w-full justify-center rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-3 text-sm font-bold text-white shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50 transition-all hover:-translate-y-0.5 active:translate-y-0"
+                  className="group relative flex w-full justify-center rounded-lg bg-cyan-700 hover:bg-cyan-800 px-4 py-3 text-sm font-bold text-white shadow-md shadow-cyan-900/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-700 disabled:opacity-50 transition-all hover:-translate-y-0.5 active:translate-y-0"
                 >
                   {loading ? (
                     <div className="flex items-center">
@@ -745,20 +753,23 @@ export function Login() {
         </div>
 
         {/* RIGHT COLUMN: SIMULATED INBOX DRAWER (5 cols) */}
-        <div className="lg:col-span-5 bg-slate-950 p-6 sm:p-8 flex flex-col justify-between text-slate-100 border-l border-slate-900 relative">
+        <div className="lg:col-span-5 bg-gradient-to-br from-cyan-950 via-sky-950 to-emerald-950 p-6 sm:p-8 flex flex-col justify-between text-slate-100 border-l border-cyan-900 relative">
+          <div className="pointer-events-none absolute right-6 top-6 h-28 w-28 rounded-full bg-white/95 p-3 opacity-10">
+            <img src={mairieLogo} alt="" className="h-full w-full object-contain" />
+          </div>
           
           <div className="space-y-4 flex-1 flex flex-col overflow-hidden">
             {/* Box Header */}
             <div className="flex items-center justify-between border-b border-slate-800 pb-4 shrink-0">
               <div className="flex items-center space-x-2.5">
-                <div className="h-3 w-3 bg-emerald-500 rounded-full animate-ping" />
+                <div className="h-3 w-3 bg-amber-400 rounded-full animate-ping" />
                 <div className="flex items-center space-x-2">
-                  <Inbox className="h-5 w-5 text-emerald-400" />
-                  <span className="text-sm font-extrabold uppercase tracking-widest text-emerald-400">SMTP Simulator</span>
+                  <Inbox className="h-5 w-5 text-amber-300" />
+                  <span className="text-sm font-extrabold uppercase tracking-widest text-amber-300">SMTP Simulator</span>
                 </div>
               </div>
               <button 
-                onClick={fetchSimulatedEmails}
+                onClick={() => setSimulatedEmails([])}
                 className="p-1.5 hover:bg-slate-900 rounded-lg text-slate-400 hover:text-slate-100 transition-colors"
                 title="Actualiser la boîte de réception"
               >
@@ -767,7 +778,7 @@ export function Login() {
             </div>
 
             {/* Sub description */}
-            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800 shrink-0">
+            <div className="bg-white/5 p-3 rounded-lg border border-cyan-800/70 shrink-0">
               <p className="text-[10px] text-slate-400 leading-relaxed">
                 🚀 <strong className="text-slate-200">Simulateur d'Email Local :</strong> Pour vous faciliter le test dans cet environnement bac à sable, les emails envoyés automatiquement par le système (welcome, jetons de sécurité, codes de récupération) apparaissent instantanément ici. Cliquez pour copier vos jetons !
               </p>
@@ -876,7 +887,7 @@ export function Login() {
           </div>
 
           {/* System status details at bottom */}
-          <div className="border-t border-slate-900 pt-4 mt-4 text-[10px] text-slate-600 font-mono shrink-0 flex justify-between items-center">
+          <div className="border-t border-cyan-900 pt-4 mt-4 text-[10px] text-cyan-100/50 font-mono shrink-0 flex justify-between items-center">
             <span>SGSIED MAIL ENGINE v1.2</span>
             <span className="text-emerald-500 font-bold flex items-center">
               <span className="h-2 w-2 bg-emerald-500 rounded-full mr-1.5 inline-block" />
@@ -887,6 +898,10 @@ export function Login() {
         </div>
 
       </div>
+      </main>
+      <footer className="shrink-0 bg-cyan-800 px-4 py-3 text-center text-xs font-medium text-cyan-50">
+        © Commune de Ouagadougou - Tous droits réservés
+      </footer>
     </div>
   );
 }

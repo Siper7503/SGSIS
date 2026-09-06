@@ -17,6 +17,7 @@ import {
   ShieldAlert, 
   Phone 
 } from 'lucide-react';
+import { ROLES } from '../lib/roles.ts';
 
 export default function Admin() {
   const [data, setData] = useState<any[]>([]);
@@ -30,7 +31,7 @@ export default function Admin() {
   const [newNom, setNewNom] = useState('');
   const [newPrenom, setNewPrenom] = useState('');
   const [newTelephone, setNewTelephone] = useState('');
-  const [newRole, setNewRole] = useState("Directeurs d'école");
+  const [newRole, setNewRole] = useState<string>(ROLES.DIRECTEUR_ECOLE);
   const [newArrondissement, setNewArrondissement] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -40,13 +41,13 @@ export default function Admin() {
   const isDseAdmin = user?.role === "Administrateur DSE";
 
   const rolesList = [
-    "Administrateur DSE",
-    "Directeur DSE",
-    "Directeurs d'école",
-    "Proviseur d'établissement",
-    "Sécretaire Adminstratif",
-    "Responsable d'Arrondissement",
-    "utilisateur lambda(visiteur)"
+    ROLES.ADMIN_DSE,
+    ROLES.DIRECTEUR_DSE,
+    ROLES.DIRECTEUR_ECOLE,
+    ROLES.PROVISEUR,
+    ROLES.SECRETAIRE_ADMIN,
+    ROLES.RESPONSABLE_ARR,
+    ROLES.VISITEUR
   ];
 
   const fetchData = async () => {
@@ -149,7 +150,7 @@ export default function Admin() {
       setNewPrenom('');
       setNewTelephone('');
       setNewPassword('');
-      setNewRole("Directeurs d'école");
+      setNewRole(ROLES.DIRECTEUR_ECOLE);
       setNewArrondissement('');
       setShowAddForm(false);
       
@@ -455,4 +456,3 @@ export default function Admin() {
     </div>
   );
 }
-

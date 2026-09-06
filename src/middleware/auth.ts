@@ -1,9 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { adminAuth } from '../lib/firebase-admin.ts';
 import { DecodedIdToken } from 'firebase-admin/auth';
-import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.JWT_SECRET || "super_secret_dse_burkina_key_2026";
+import { verifySession } from '../lib/auth-security.ts';
 
 export interface AuthRequest extends Request {
   user?: DecodedIdToken & { id?: number; role?: string };
@@ -24,7 +22,7 @@ export const requireAuth = async (
   
   // Try verifying as custom JWT first
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = verifySession(token) as any;
     req.user = decoded;
     next();
     return;

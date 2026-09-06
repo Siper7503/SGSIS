@@ -12,9 +12,9 @@ import * as xlsx from "xlsx";
 import Papa from "papaparse";
 import { GoogleGenAI } from "@google/genai";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-
-const JWT_SECRET = process.env.JWT_SECRET || "super_secret_dse_burkina_key_2026";
+import { createOneTimeToken, hashSecret, secretsMatch, signSession } from "./src/lib/auth-security.ts";
+import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SCHOOL_WRITE_ROLES, hasAnyRole } from "./src/lib/roles.ts";
+import { createFacilitiesRouter } from "./src/server/routes/facilities.ts";
 
 interface SimulatedEmail {
   id: string;
@@ -97,6 +97,18 @@ function validatePasswordSecured(pass: string): { isValid: boolean; error?: stri
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+function forbid(res: express.Response, message = "Accès refusé : droits insuffisants.") {
+  res.status(403).json({ error: message });
+}
+
+function requireAnyRole(req: AuthRequest, res: express.Response, allowedRoles: readonly string[], message?: string): boolean {
+  if (!req.user || !hasAnyRole(req.user.role, allowedRoles)) {
+    forbid(res, message);
+    return false;
+  }
+  return true;
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
@@ -122,6 +134,7 @@ async function startServer() {
   });
 
   app.post("/api/predictions", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : le module de prédiction est réservé à la DSE.")) return;
     try {
       if (!ai) {
         res.status(503).json({ error: "L'IA n'est pas configurée (clé API manquante)." });
@@ -207,26 +220,21 @@ async function startServer() {
 
       // 4. Automatic "Droit de contrôle" (Pilotage / Lecture-Ecriture / Lecture-Recherche)
       let rights = "lecture et recherche";
-      if (role === "Administrateur DSE" || role === "Directeur DSE") {
+      if (hasAnyRole(role, DSE_ROLES)) {
         rights = "pilotage de l'ensemble du système (lecture, ecriture et recherche)";
-      } else if (
-        role === "Directeurs d'école" ||
-        role === "Proviseur d'établissement" ||
-        role === "Sécretaire Adminstratif" ||
-        role === "Responsable d'Arrondissement"
-      ) {
+      } else if (hasAnyRole(role, [...LOCAL_SCHOOL_ROLES, ...ARRONDISSEMENT_ROLES])) {
         rights = "lecture, ecriture et recherche";
       }
 
       // 5. Automatic Secure Token Code generation
-      const accessToken = "SGSIED-" + Math.random().toString(36).substring(2, 8).toUpperCase() + "-" + Math.floor(100 + Math.random() * 900);
+      const accessToken = createOneTimeToken();
 
       const existingUsers = await db.select().from(users).where(eq(users.email, email));
 
       // Limit Administrateur DSE accounts to maximum of 2
-      if (role === "Administrateur DSE") {
-        const admins = await db.select().from(users).where(eq(users.role, "Administrateur DSE"));
-        const isAlreadyAdmin = existingUsers.length > 0 && existingUsers[0].role === "Administrateur DSE";
+      if (hasAnyRole(role, [ROLES.ADMIN_DSE])) {
+        const admins = await db.select().from(users).where(eq(users.role, ROLES.ADMIN_DSE));
+        const isAlreadyAdmin = existingUsers.length > 0 && hasAnyRole(existingUsers[0].role, [ROLES.ADMIN_DSE]);
         if (!isAlreadyAdmin && admins.length >= 2) {
           res.status(400).json({ error: "La limite stricte de deux (02) comptes d'accès Administrateur DSE a été atteinte pour l'ensemble du système." });
           return;
@@ -244,7 +252,7 @@ async function startServer() {
           passwordHash: hash,
           role,
           rights,
-          accessToken,
+          accessToken: hashSecret(accessToken),
           arrondissement: arrondissement || null,
         }).where(eq(users.email, email)).returning();
       } else {
@@ -257,7 +265,7 @@ async function startServer() {
           telephone: cleanPhone,
           role,
           rights,
-          accessToken,
+          accessToken: hashSecret(accessToken),
           arrondissement: arrondissement || null,
           passwordHash: hash,
           loginAttempts: 0,
@@ -271,7 +279,7 @@ async function startServer() {
         action: "INSCRIPTION_SECURE",
         entityType: "users",
         entityId: userResult[0].id,
-        details: { email, role, rights, accessToken }
+        details: { email, role, rights }
       });
 
       // 7. Simuler l'envoi du jeton par email
@@ -328,11 +336,11 @@ async function startServer() {
       // 1. Vérifier si le compte est bloqué
       if (user.isLocked || user.loginAttempts >= maxAttempts) {
         // If they are logging in with their correct accessToken (recovery token), let them in and unlock!
-        if (accessToken && user.accessToken && user.accessToken === accessToken) {
+        if (accessToken && secretsMatch(accessToken, user.accessToken)) {
           isSuccess = true;
-          const newAccessToken = "SGSIED-" + Math.random().toString(36).substring(2, 8).toUpperCase() + "-" + Math.floor(100 + Math.random() * 900);
+          const newAccessToken = createOneTimeToken();
           await db.update(users).set({ 
-            accessToken: newAccessToken,
+            accessToken: hashSecret(newAccessToken),
             isLocked: false,
             loginAttempts: 0
           }).where(eq(users.id, user.id));
@@ -360,12 +368,12 @@ async function startServer() {
       if (accessToken) {
         // Authenticate using the generated security code token
         if (!isSuccess) {
-          if (user.accessToken && user.accessToken === accessToken) {
+          if (secretsMatch(accessToken, user.accessToken)) {
             isSuccess = true;
             // Reset token after use
-            const newAccessToken = "SGSIED-" + Math.random().toString(36).substring(2, 8).toUpperCase() + "-" + Math.floor(100 + Math.random() * 900);
+            const newAccessToken = createOneTimeToken();
             await db.update(users).set({ 
-              accessToken: newAccessToken,
+              accessToken: hashSecret(newAccessToken),
               isLocked: false,
               loginAttempts: 0
             }).where(eq(users.id, user.id));
@@ -439,18 +447,15 @@ async function startServer() {
 
       // 4. Vérifier si le profil requiert la 2FA (Uniquement pour Admin DSE, Directeur DSE et Responsable d'Arrondissement, en cas de connexion par mot de passe)
       const requires2FA = (
-        user.role === "Administrateur DSE" || 
-        user.role === "Directeur DSE" || 
-        user.role === "Responsable d'arrondissement" || 
-        user.role === "Responsable d'Arrondissement"
+        hasAnyRole(user.role, [...DSE_ROLES, ...ARRONDISSEMENT_ROLES])
       ) && !accessToken;
 
       if (requires2FA) {
-        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpCode = createOneTimeToken('OTP').slice(-6);
         const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
         await db.update(users).set({
-          otpCode,
+          otpCode: hashSecret(otpCode),
           otpExpiresAt
         }).where(eq(users.id, user.id));
 
@@ -481,7 +486,7 @@ async function startServer() {
       }
 
       // 5. Générer le JWT de session
-      const token = jwt.sign(
+      const token = signSession(
         { 
           id: user.id, 
           uid: user.uid, 
@@ -493,9 +498,7 @@ async function startServer() {
           telephone: user.telephone,
           rights: user.rights,
           accessToken: user.accessToken
-        },
-        JWT_SECRET,
-        { expiresIn: "24h" }
+        }
       );
 
       await db.insert(auditLogs).values({
@@ -549,7 +552,7 @@ async function startServer() {
         return;
       }
 
-      if (!user.otpCode || user.otpCode !== otpCode) {
+      if (!secretsMatch(otpCode, user.otpCode)) {
         await db.insert(auditLogs).values({
           userId: user.id,
           action: "ECHEC_VERIFICATION_OTP",
@@ -579,7 +582,7 @@ async function startServer() {
         otpExpiresAt: null
       }).where(eq(users.id, user.id));
 
-      const token = jwt.sign(
+      const token = signSession(
         { 
           id: user.id, 
           uid: user.uid, 
@@ -591,9 +594,7 @@ async function startServer() {
           telephone: user.telephone,
           rights: user.rights,
           accessToken: user.accessToken
-        },
-        JWT_SECRET,
-        { expiresIn: "24h" }
+        }
       );
 
       await db.insert(auditLogs).values({
@@ -643,11 +644,8 @@ async function startServer() {
       }
 
       const user = usersFound[0];
-      const tokenToUse = user.accessToken || ("SGSIED-" + Math.random().toString(36).substring(2, 8).toUpperCase() + "-" + Math.floor(100 + Math.random() * 900));
-      
-      if (!user.accessToken) {
-        await db.update(users).set({ accessToken: tokenToUse }).where(eq(users.id, user.id));
-      }
+      const tokenToUse = createOneTimeToken();
+      await db.update(users).set({ accessToken: hashSecret(tokenToUse) }).where(eq(users.id, user.id));
 
       // Log recovery action
       await db.insert(auditLogs).values({
@@ -655,7 +653,7 @@ async function startServer() {
         action: "RECUPERATION_COMPTE",
         entityType: "users",
         entityId: user.id,
-        details: { email, recoveryToken: tokenToUse }
+        details: { email, recoveryTokenIssued: true }
       });
 
       // Simuler l'envoi du jeton de récupération par email
@@ -680,8 +678,12 @@ async function startServer() {
   });
 
   // Simulated local emails for debugging/sandbox visualization
-  app.get("/api/auth/simulated-emails", async (req, res) => {
+  app.get("/api/auth/simulated-emails", requireAuth, async (req: AuthRequest, res) => {
     try {
+    if (!hasAnyRole(req.user?.role, [ROLES.ADMIN_DSE])) {
+        res.status(403).json({ error: "Accès réservé à l'administration DSE." });
+        return;
+      }
       const { email } = req.query;
       if (email) {
         const filtered = simulatedEmails.filter(em => em.to.toLowerCase() === (email as string).toLowerCase());
@@ -696,7 +698,7 @@ async function startServer() {
 
   // Admin lock/unlock users (Restricted to Administrateur DSE)
   app.post("/api/users/unlock/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || req.user.role !== "Administrateur DSE") {
+    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
       res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut déverrouiller ou autoriser des comptes." });
       return;
     }
@@ -729,7 +731,7 @@ async function startServer() {
   });
 
   app.post("/api/users/lock/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || req.user.role !== "Administrateur DSE") {
+    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
       res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut bloquer des comptes." });
       return;
     }
@@ -760,7 +762,7 @@ async function startServer() {
 
   // Create a new user by Administrateur DSE
   app.post("/api/users", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || req.user.role !== "Administrateur DSE") {
+    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
       res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut ajouter de nouveaux utilisateurs." });
       return;
     }
@@ -805,8 +807,8 @@ async function startServer() {
       }
 
       // Limit Administrateur DSE accounts to maximum of 2
-      if (role === "Administrateur DSE") {
-        const admins = await db.select().from(users).where(eq(users.role, "Administrateur DSE"));
+      if (hasAnyRole(role, [ROLES.ADMIN_DSE])) {
+        const admins = await db.select().from(users).where(eq(users.role, ROLES.ADMIN_DSE));
         if (admins.length >= 2) {
           res.status(400).json({ error: "La limite stricte de deux (02) comptes d'accès Administrateur DSE a été atteinte pour l'ensemble du système." });
           return;
@@ -815,19 +817,14 @@ async function startServer() {
 
       // 5. Automatic "Droit de contrôle" (Pilotage / Lecture-Ecriture / Lecture-Recherche)
       let rights = "lecture et recherche";
-      if (role === "Administrateur DSE" || role === "Directeur DSE") {
+      if (hasAnyRole(role, DSE_ROLES)) {
         rights = "pilotage de l'ensemble du système (lecture, ecriture et recherche)";
-      } else if (
-        role === "Directeurs d'école" ||
-        role === "Proviseur d'établissement" ||
-        role === "Sécretaire Adminstratif" ||
-        role === "Responsable d'Arrondissement"
-      ) {
+      } else if (hasAnyRole(role, [...LOCAL_SCHOOL_ROLES, ...ARRONDISSEMENT_ROLES])) {
         rights = "lecture, ecriture et recherche";
       }
 
       // 6. Automatic Secure Token Code generation
-      const accessToken = "SGSIED-" + Math.random().toString(36).substring(2, 8).toUpperCase() + "-" + Math.floor(100 + Math.random() * 900);
+      const accessToken = createOneTimeToken();
       const uid = "custom_" + Math.random().toString(36).substring(2, 15);
       const hash = await bcrypt.hash(password, 10);
 
@@ -839,7 +836,7 @@ async function startServer() {
         telephone: cleanPhone,
         role,
         rights,
-        accessToken,
+        accessToken: hashSecret(accessToken),
         arrondissement: arrondissement || null,
         passwordHash: hash,
         loginAttempts: 0,
@@ -872,7 +869,7 @@ async function startServer() {
 
   // DELETE a user (reject access or delete completely)
   app.delete("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || req.user.role !== "Administrateur DSE") {
+    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
       res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut refuser l'accès ou supprimer des utilisateurs." });
       return;
     }
@@ -922,7 +919,7 @@ async function startServer() {
 
   // DELETE single audit log
   app.delete("/api/audit-logs/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || req.user.role !== "Administrateur DSE") {
+    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
       res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut supprimer des journaux d'audit." });
       return;
     }
@@ -941,7 +938,7 @@ async function startServer() {
 
   // DELETE all audit logs (bulk clear)
   app.delete("/api/audit-logs", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || req.user.role !== "Administrateur DSE") {
+    if (!req.user || !hasAnyRole(req.user.role, [ROLES.ADMIN_DSE])) {
       res.status(403).json({ error: "Accès refusé : Seul l'Administrateur DSE peut vider les journaux d'audit." });
       return;
     }
@@ -964,11 +961,7 @@ async function startServer() {
   });
 
   app.post("/api/etablissements", requireAuth, async (req: AuthRequest, res) => {
-    const allowedRoles = ["Administrateur DSE", "Directeur DSE", "Proviseur d'établissement", "Sécretaire Adminstratif", "Directeurs d'école"];
-    if (!req.user || !allowedRoles.includes(req.user.role || "")) {
-      res.status(403).json({ error: "Accès refusé : Vous n'avez pas les droits d'écriture requis." });
-      return;
-    }
+    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture requis.")) return;
     try {
       const { nom, type, arrondissement, statut, nomDirecteur, coordonnees, force } = req.body;
 
@@ -1086,11 +1079,7 @@ async function startServer() {
   });
 
   app.put("/api/etablissements/:id", requireAuth, async (req: AuthRequest, res) => {
-    const allowedRoles = ["Administrateur DSE", "Directeur DSE", "Proviseur d'établissement", "Sécretaire Adminstratif", "Directeurs d'école"];
-    if (!req.user || !allowedRoles.includes(req.user.role || "")) {
-      res.status(403).json({ error: "Accès refusé : Vous n'avez pas les droits d'écriture requis." });
-      return;
-    }
+    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture requis.")) return;
     try {
       const { nom, type, arrondissement, statut, nomDirecteur, coordonnees, archived, force } = req.body;
       const id = parseInt(req.params.id);
@@ -1176,11 +1165,7 @@ async function startServer() {
 
   // Archivage logique au lieu de suppression définitive (SF-02)
   app.delete("/api/etablissements/:id", requireAuth, async (req: AuthRequest, res) => {
-    const allowedRoles = ["Administrateur DSE", "Directeur DSE", "Proviseur d'établissement", "Sécretaire Adminstratif", "Directeurs d'école"];
-    if (!req.user || !allowedRoles.includes(req.user.role || "")) {
-      res.status(403).json({ error: "Accès refusé : Vous n'avez pas les droits d'archivage requis." });
-      return;
-    }
+    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'archivage requis.")) return;
     try {
       const id = parseInt(req.params.id);
       const updated = await db.update(etablissements).set({
@@ -1208,11 +1193,7 @@ async function startServer() {
   });
 
   app.post("/api/etablissements/bulk", requireAuth, async (req: AuthRequest, res) => {
-    const allowedRoles = ["Administrateur DSE", "Directeur DSE", "Proviseur d'établissement", "Sécretaire Adminstratif", "Directeurs d'école"];
-    if (!req.user || !allowedRoles.includes(req.user.role || "")) {
-      res.status(403).json({ error: "Accès refusé : Vous n'avez pas les droits d'écriture requis." });
-      return;
-    }
+    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture requis.")) return;
     try {
       const data = req.body;
       if (!Array.isArray(data)) {
@@ -1270,11 +1251,7 @@ async function startServer() {
   });
 
   app.post("/api/etablissements/upload", requireAuth, upload.single("file"), async (req: AuthRequest, res) => {
-    const allowedRoles = ["Administrateur DSE", "Directeur DSE", "Proviseur d'établissement", "Sécretaire Adminstratif", "Directeurs d'école"];
-    if (!req.user || !allowedRoles.includes(req.user.role || "")) {
-      res.status(403).json({ error: "Accès refusé : Vous n'avez pas les droits d'écriture requis." });
-      return;
-    }
+    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture requis.")) return;
     try {
       const file = (req as any).file;
       if (!file) {
@@ -1503,6 +1480,7 @@ async function startServer() {
   });
 
   app.post("/api/infrastructures", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture sur les infrastructures.")) return;
     try {
       const { 
         etablissementId,
@@ -1595,11 +1573,7 @@ async function startServer() {
   });
 
   app.post("/api/effectifs", requireAuth, async (req: AuthRequest, res) => {
-    const allowedRoles = ["Administrateur DSE", "Directeur DSE", "Proviseur d'établissement", "Sécretaire Adminstratif", "Directeurs d'école"];
-    if (!req.user || !allowedRoles.includes(req.user.role || "")) {
-      res.status(403).json({ error: "Accès refusé : Vous n'avez pas les droits d'écriture requis." });
-      return;
-    }
+    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture requis.")) return;
     try {
       const { etablissementId, anneeScolaire, elevesFilles, elevesGarcons, enseignants, personnelsAdmin } = req.body;
       if (!etablissementId || !anneeScolaire) {
@@ -1667,6 +1641,7 @@ async function startServer() {
   });
 
   app.post("/api/mobilier", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : Seule la DSE peut modifier le stock mobilier.")) return;
     try {
       const { etablissementId, tablesBancs, chaisesEleves, tablesBureau, chaisesBureau } = req.body;
       if (!etablissementId) {
@@ -1700,6 +1675,7 @@ async function startServer() {
   });
 
   app.post("/api/mobilier/dotation", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : Seule la DSE peut enregistrer une dotation mobilier.")) return;
     try {
       const { etablissementId, tablesBancs, chaisesEleves, tablesBureau, chaisesBureau, motif } = req.body;
       
@@ -1770,6 +1746,7 @@ async function startServer() {
   });
 
   app.post("/api/constructions", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : Seule la DSE peut créer des projets de construction.")) return;
     try {
       const { intitule, localisation, arrondissement, datesPrevisionnelles, maitreOuvrage, budget, modeleType, statut, avancement } = req.body;
       if (!intitule) {
@@ -1805,6 +1782,7 @@ async function startServer() {
   });
 
   app.put("/api/constructions/:id", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : Seule la DSE peut modifier des projets de construction.")) return;
     try {
       const { intitule, localisation, arrondissement, datesPrevisionnelles, maitreOuvrage, budget, modeleType, statut, budgetConsomme, avancement } = req.body;
       const updated = await db.update(constructions).set({
@@ -1895,11 +1873,7 @@ async function startServer() {
 
   // Create communication with targeting and multi-channel parallel delivery
   app.post("/api/communications", requireAuth, async (req: AuthRequest, res) => {
-    const allowedRoles = ["Administrateur DSE", "Directeur DSE"];
-    if (!req.user || !allowedRoles.includes(req.user.role || "")) {
-      res.status(403).json({ error: "Accès refusé : Seul le personnel de Direction DSE peut diffuser des communications." });
-      return;
-    }
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : Seul le personnel de Direction DSE peut diffuser des communications.")) return;
     try {
       const { titre, contenu, ciblage, delaiHeures } = req.body;
       if (!titre || !contenu) {
@@ -1920,7 +1894,8 @@ async function startServer() {
 
       // RESOLUTION OF TARGETED RECIPIENTS (SF-23 / SF-26)
       // Get all school directors (role = Directeur / Proviseur)
-      const allDirectors = await db.select().from(users).where(eq(users.role, "Directeur / Proviseur"));
+      const allUsers = await db.select().from(users);
+      const allDirectors = allUsers.filter((user) => hasAnyRole(user.role, LOCAL_SCHOOL_ROLES));
       let targetUsers = allDirectors;
 
       const targetStr = ciblage || "Tous les établissements";
@@ -2063,6 +2038,7 @@ async function startServer() {
 
   // Get receipts details for a specific communication (for DSE Director)
   app.get("/api/communications/:id/receipts", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : le suivi des accusés est réservé à la DSE.")) return;
     try {
       const commId = parseInt(req.params.id);
       const receiptsList = await db.select().from(communicationReceipts).where(eq(communicationReceipts.communicationId, commId));
@@ -2120,6 +2096,7 @@ async function startServer() {
 
   // Get tardiness alerts for DSE Director (Unacknowledged beyond deadline) (SF-25)
   app.get("/api/communications/alerts", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : les alertes de retard sont réservées à la DSE.")) return;
     try {
       // Find all communications
       const allComms = await db.select().from(communications);
@@ -2169,6 +2146,7 @@ async function startServer() {
 
   // Admin: Users
   app.get("/api/users", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : la liste des utilisateurs est réservée à la DSE.")) return;
     try {
       const results = await db.select().from(users).orderBy(users.createdAt);
       res.json(results);
@@ -2195,54 +2173,11 @@ async function startServer() {
     }
   };
 
-  // M: Maintenance et Entretien (Incidents)
-  app.get("/api/incidents", requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const results = await db.select().from(incidents).orderBy(incidents.dateSignalement);
-      res.json(results);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/incidents", requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const { etablissementId, type, description } = req.body;
-      const inserted = await db.insert(incidents).values({
-        etablissementId: parseInt(etablissementId),
-        type,
-        description,
-        signaleParId: req.user?.id || null
-      }).returning();
-      
-      await logAudit(req.user?.id, 'CREATE', 'incidents', inserted[0].id, { type, description });
-      res.json(inserted[0]);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.put("/api/incidents/:id", requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const { statut, dateResolution } = req.body;
-      const updated = await db.update(incidents).set({
-        statut,
-        dateResolution: dateResolution ? new Date(dateResolution) : null
-      }).where(eq(incidents.id, parseInt(req.params.id))).returning();
-      
-      if (updated.length > 0) {
-        await logAudit(req.user?.id, 'UPDATE', 'incidents', updated[0].id, { statut });
-        res.json(updated[0]);
-      } else {
-        res.status(404).json({ error: "Not found" });
-      }
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+  app.use(createFacilitiesRouter(logAudit));
 
   // M: Cantine & WASH My Establishment Look-up
   app.get("/api/cantine-wash/my-establishment", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, LOCAL_SCHOOL_ROLES, "Accès refusé : cet espace est réservé aux responsables d'établissement.")) return;
     try {
       const directorName = `${req.user?.prenom || ''} ${req.user?.nom || ''}`.trim().toLowerCase();
       if (!directorName) {
@@ -2281,6 +2216,7 @@ async function startServer() {
 
   // M: Cantine & WASH Direct Saisie
   app.post("/api/cantine-wash/submit", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, LOCAL_SCHOOL_ROLES, "Accès refusé : cette saisie est réservée aux responsables d'établissement.")) return;
     try {
       const { nom, type, arrondissement, forages, latrines, cantinesCount } = req.body;
       if (!nom || !type) {
@@ -2381,6 +2317,7 @@ async function startServer() {
 
   // M: Infrastructure My Establishment Look-up
   app.get("/api/infrastructures/my-establishment", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, LOCAL_SCHOOL_ROLES, "Accès refusé : cet espace est réservé aux responsables d'établissement.")) return;
     try {
       const directorName = `${req.user?.prenom || ''} ${req.user?.nom || ''}`.trim().toLowerCase();
       if (!directorName) {
@@ -2419,6 +2356,7 @@ async function startServer() {
 
   // M: Infrastructure Direct Saisie
   app.post("/api/infrastructures/submit", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, LOCAL_SCHOOL_ROLES, "Accès refusé : cette saisie est réservée aux responsables d'établissement.")) return;
     try {
       const { nom, type, arrondissement, batimentsEtudes, batimentsAdmin, laboratoires, infirmerie } = req.body;
       if (!nom || !type) {
@@ -2511,70 +2449,10 @@ async function startServer() {
     }
   });
 
-  // M: WASH (Cantines scolaires et points d'eau)
-  app.get("/api/wash", requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const results = await db.select().from(wash);
-      res.json(results);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/wash", requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const { etablissementId, forages, foragesFonctionnels, latrines, latrinesFonctionnelles, cantineDisponibilite, vivresDisponibles } = req.body;
-      const inserted = await db.insert(wash).values({
-        etablissementId: parseInt(etablissementId),
-        forages: parseInt(forages || 0),
-        foragesFonctionnels: parseInt(foragesFonctionnels || 0),
-        latrines: parseInt(latrines || 0),
-        latrinesFonctionnelles: parseInt(latrinesFonctionnelles || 0),
-        cantineDisponibilite: Boolean(cantineDisponibilite),
-        vivresDisponibles
-      }).returning();
-      
-      await logAudit(req.user?.id, 'CREATE', 'wash', inserted[0].id, req.body);
-      res.json(inserted[0]);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // M: TICE (Equipements Informatiques)
-  app.get("/api/tice", requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const results = await db.select().from(tice);
-      res.json(results);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/tice", requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const { etablissementId, sallesInformatiques, ordinateurs, ordinateursFonctionnels, connectiviteInternet, typeConnexion } = req.body;
-      const inserted = await db.insert(tice).values({
-        etablissementId: parseInt(etablissementId),
-        sallesInformatiques: parseInt(sallesInformatiques || 0),
-        ordinateurs: parseInt(ordinateurs || 0),
-        ordinateursFonctionnels: parseInt(ordinateursFonctionnels || 0),
-        connectiviteInternet: Boolean(connectiviteInternet),
-        typeConnexion
-      }).returning();
-      
-      await logAudit(req.user?.id, 'CREATE', 'tice', inserted[0].id, req.body);
-      res.json(inserted[0]);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   // M: Journal d'Audit
   app.get("/api/audit-logs", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : le journal d'audit est réservé à la DSE.")) return;
     try {
-      // Pour des raisons de securité, on pourrait verifier le role req.user.role === 'Administrateur DSE'
-      // mais ici on le retourne simplement.
       const results = await db.select({
          log: auditLogs,
          user: users

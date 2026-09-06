@@ -4,6 +4,7 @@ import { useAuth } from '../components/AuthProvider.tsx';
 import { Building2, Plus, Search, Upload } from 'lucide-react';
 import { EtablissementForm } from '../components/EtablissementForm.tsx';
 import { ImportCsvModal } from '../components/ImportCsvModal.tsx';
+import { DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Etablissements() {
   const [etablissements, setEtablissements] = useState<any[]>([]);
@@ -19,7 +20,7 @@ export default function Etablissements() {
 
   const { token, user } = useAuth();
   const userRole = user?.role;
-  const isObserver = !["Administrateur DSE", "Directeur DSE", "Proviseur d'établissement", "Sécretaire Adminstratif", "Directeurs d'école"].includes(userRole || "");
+  const canWrite = hasAnyRole(userRole, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES]);
 
   const fetchEtablissements = async () => {
     if (!token) return;
@@ -118,7 +119,7 @@ export default function Etablissements() {
             Gestion des fiches établissements Publics (308 primaires + 31 secondaires).
           </p>
         </div>
-        {!isObserver && (
+        {canWrite && (
           <div className="mt-4 flex sm:mt-0 space-x-3">
             <button
               type="button"
@@ -299,7 +300,7 @@ export default function Etablissements() {
                     <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
                       Directeur/Proviseur
                     </th>
-                    {!isObserver && (
+                    {canWrite && (
                       <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6 text-right text-sm font-semibold text-gray-900">
                         Actions
                       </th>
@@ -339,7 +340,7 @@ export default function Etablissements() {
                           )}
                         </td>
                         <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{etab.nomDirecteur || '-'}</td>
-                        {!isObserver && (
+                        {canWrite && (
                           <td className="whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6 space-x-3">
                             <button
                               onClick={() => setEditingEtablissement(etab)}
