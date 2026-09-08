@@ -374,11 +374,11 @@ export function Login() {
                         id="otp-code"
                         type="text"
                         required
-                        maxLength={6}
+                        maxLength={12}
                         value={otpCode}
-                        onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                        onChange={(e) => setOtpCode(e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
                         className="block w-full rounded-lg border border-cyan-100 py-3 pl-10 pr-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm font-semibold tracking-widest text-center"
-                        placeholder="Ex: 123456"
+                        placeholder="Ex: mqdH7p"
                       />
                     </div>
                   </div>
