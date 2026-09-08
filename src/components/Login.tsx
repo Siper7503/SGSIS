@@ -48,7 +48,7 @@ export function Login() {
   const [nom, setNom] = useState('');
   const [prenom, setPrenom] = useState('');
   const [telephone, setTelephone] = useState('');
-  const [role, setRole] = useState<string>(ROLES.PROVISEUR);
+  const [role, setRole] = useState<string>(ROLES.SUPER_ADMIN);
   const [arrondissement, setArrondissement] = useState('');
 
   // 2FA verification step
@@ -532,6 +532,7 @@ export function Login() {
                           type="button"
                           onClick={() => {
                             setAuthMode('register');
+                            setRole(ROLES.SUPER_ADMIN);
                             setError(null);
                           }}
                           className="font-bold text-cyan-700 hover:text-cyan-600 transition-colors"
