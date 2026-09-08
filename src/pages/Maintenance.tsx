@@ -3,13 +3,15 @@ import { useAuth } from '../components/AuthProvider.tsx';
 import { apiFetch } from '../lib/api.ts';
 import { Plus, Search, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { IncidentForm } from '../components/IncidentForm.tsx';
+import { DSE_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Maintenance() {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const canResolve = hasAnyRole(user?.role, DSE_ROLES);
 
   const fetchData = async () => {
     if (!token) return;
@@ -135,12 +137,12 @@ export default function Maintenance() {
                 )}
               </div>
               <div className="bg-gray-50 px-4 py-3 sm:px-6 flex justify-end space-x-2">
-                {item.statut === 'Signalé' && (
+                {canResolve && item.statut === 'Signalé' && (
                   <button onClick={() => updateStatus(item.id, 'En cours')} className="text-yellow-600 hover:text-yellow-900 text-xs font-medium">
                     Passer en cours
                   </button>
                 )}
-                {item.statut !== 'Résolu' && (
+                {canResolve && item.statut !== 'Résolu' && (
                   <button onClick={() => updateStatus(item.id, 'Résolu')} className="text-green-600 hover:text-green-900 text-xs font-medium">
                     Marquer résolu
                   </button>

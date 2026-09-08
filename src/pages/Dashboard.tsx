@@ -55,7 +55,7 @@ import {
   Pie, 
   Cell
 } from 'recharts';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
 import * as XLSX from 'xlsx';
 
 interface SchoolSummary {
@@ -172,6 +172,7 @@ export default function Dashboard() {
   // DSE Admin Specific States
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [adminAudits, setAdminAudits] = useState<any[]>([]);
+  const [systemHealth, setSystemHealth] = useState<any>(null);
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState<string | null>(null);
   const [adminTab, setAdminTab] = useState<'audits' | 'control'>('control');
@@ -438,9 +439,10 @@ export default function Dashboard() {
     try {
       setAdminLoading(true);
       setAdminError(null);
-      const [usersRes, auditsRes] = await Promise.all([
+      const [usersRes, auditsRes, healthRes] = await Promise.all([
         apiFetch('/api/users', { headers: { Authorization: `Bearer ${token}` } }),
-        apiFetch('/api/audit-logs', { headers: { Authorization: `Bearer ${token}` } })
+        apiFetch('/api/audit-logs', { headers: { Authorization: `Bearer ${token}` } }),
+        apiFetch('/api/system/health', { headers: { Authorization: `Bearer ${token}` } })
       ]);
 
       if (!usersRes.ok || !auditsRes.ok) {
@@ -456,6 +458,8 @@ export default function Dashboard() {
       if (Array.isArray(auditsData)) {
         setAdminAudits(auditsData.sort((a, b) => new Date(b.log.createdAt).getTime() - new Date(a.log.createdAt).getTime()));
       }
+      const healthData = await healthRes.json();
+      setSystemHealth(healthData);
     } catch (err: any) {
       console.error(err);
       setAdminError(err.message);
@@ -820,6 +824,65 @@ export default function Dashboard() {
   // -------------------------------------------------------------
   // VIEW 0: INTERFACE ADMINISTRATEUR SYSTÈME DSE (Custom Security Dashboard)
   // -------------------------------------------------------------
+  if (isTechnicalSuperAdmin) {
+    return (
+      <div className="space-y-6 animate-fade-in pb-10">
+        <div className="rounded-2xl bg-slate-900 p-6 text-white shadow-lg">
+          <p className="text-xs font-bold uppercase tracking-wider text-amber-300">SuperAdmin technique</p>
+          <h1 className="mt-2 text-3xl font-black">Centre de supervision</h1>
+          <p className="mt-2 max-w-2xl text-sm text-slate-300">Contrôle global des comptes, des rôles, des blocages de sécurité et de la traçabilité du système.</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <Users className="h-5 w-5 text-blue-600" />
+            <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500">Comptes surveillés</p>
+            <p className="mt-1 text-2xl font-black text-slate-900">{adminUsers.length}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <Lock className="h-5 w-5 text-rose-600" />
+            <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500">Comptes bloqués</p>
+            <p className="mt-1 text-2xl font-black text-rose-700">{adminUsers.filter((account) => account.isLocked).length}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <Shield className="h-5 w-5 text-emerald-600" />
+            <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500">Administrateurs métier</p>
+            <p className="mt-1 text-2xl font-black text-emerald-700">{adminUsers.filter((account) => hasAnyRole(account.role, SYSTEM_ADMIN_ROLES)).length}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <Activity className="h-5 w-5 text-amber-600" />
+            <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500">Événements d’audit</p>
+            <p className="mt-1 text-2xl font-black text-amber-700">{adminAudits.length}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <ShieldCheck className="h-5 w-5 text-cyan-600" />
+            <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500">État technique</p>
+            <p className={`mt-1 text-sm font-black ${systemHealth?.status === 'operational' ? 'text-emerald-700' : 'text-rose-700'}`}>
+              {systemHealth?.status === 'operational' ? 'Opérationnel' : 'À vérifier'}
+            </p>
+            <p className="mt-1 text-[11px] text-slate-500">Base : {systemHealth?.database || 'inconnue'}</p>
+          </div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Link to="/admin" className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-blue-300">
+            <Shield className="h-6 w-6 text-blue-600" />
+            <h2 className="mt-3 font-bold text-slate-900">Administration des comptes</h2>
+            <p className="mt-1 text-sm text-slate-500">Creer, surveiller, bloquer et revoquer les acces.</p>
+          </Link>
+          <Link to="/audit" className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-blue-300">
+            <ShieldAlert className="h-6 w-6 text-amber-600" />
+            <h2 className="mt-3 font-bold text-slate-900">Journal d'audit</h2>
+            <p className="mt-1 text-sm text-slate-500">Consulter les traces de securite et les actions metiers.</p>
+          </Link>
+          <Link to="/rapports-annuels" className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-blue-300">
+            <FileText className="h-6 w-6 text-emerald-600" />
+            <h2 className="mt-3 font-bold text-slate-900">Rapports scolaires</h2>
+            <p className="mt-1 text-sm text-slate-500">Surveiller l'etat des transmissions annuelles.</p>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (isTechnicalSuperAdmin) {
     const filteredUsers = adminUsers.filter(u => {
       const fullName = `${u.prenom || ''} ${u.nom || ''}`.toLowerCase();

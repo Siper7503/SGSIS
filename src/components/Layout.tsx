@@ -5,7 +5,7 @@ import { Login } from './Login.tsx';
 import { Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Briefcase, Map as MapIcon, Sparkles, Menu, X, WifiOff, AlertTriangle, Droplets, Monitor, ShieldAlert } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { getQueuedActions, syncData } from '../lib/sync.ts';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 const navigation = [
   { name: 'Tableau de bord', href: '/', icon: Home },
@@ -20,6 +20,7 @@ const navigation = [
   { name: 'Équipements (TICE)', href: '/tice', icon: Monitor },
   { name: 'Communications (M6)', href: '/communications', icon: Mail },
   { name: 'Rapports (M7)', href: '/rapports', icon: FileText },
+  { name: 'Rapports scolaires annuels', href: '/rapports-annuels', icon: FileText },
   { name: 'Prédictions IA', href: '/predictions', icon: Sparkles },
   { name: 'Journal Audit', href: '/audit', icon: ShieldAlert },
   { name: 'Administration (M8)', href: '/admin', icon: Settings },
@@ -93,7 +94,7 @@ export function Layout() {
   const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
   const isArrondissementResp = hasAnyRole(role, ARRONDISSEMENT_ROLES);
 
-  if (isLocalActor && !['/', '/etablissements', '/effectifs', '/communications', '/infrastructures'].includes(currentPath)) {
+  if (isLocalActor && !(hasAnyRole(role, [ROLES.PROVISEUR]) && currentPath === '/admin') && !['/', '/etablissements', '/effectifs', '/communications', '/infrastructures', '/maintenance', '/rapports-annuels'].includes(currentPath)) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -114,7 +115,7 @@ export function Layout() {
     );
   }
 
-  if (isArrondissementResp && !['/', '/admin', '/mobilier', '/carte', '/rapports'].includes(currentPath)) {
+  if (isArrondissementResp && !['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/maintenance', '/carte', '/rapports', '/rapports-annuels'].includes(currentPath)) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -177,7 +178,7 @@ export function Layout() {
     );
   }
 
-  if (!isSuperAdmin && !isDseAdmin && !isArrondissementResp && currentPath === '/admin') {
+  if (!isSuperAdmin && !isDseAdmin && !(hasAnyRole(role, [ROLES.PROVISEUR])) && currentPath === '/admin') {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -209,17 +210,17 @@ export function Layout() {
     // Filter navigation based on role privileges
     const filteredNavigation = navigation.filter((item) => {
       if (isSuper) {
-        return ['/', '/admin', '/audit', '/carte', '/rapports'].includes(item.href);
+        return ['/', '/admin', '/audit', '/carte', '/rapports', '/rapports-annuels'].includes(item.href);
       }
       if (isDse) {
         return item.href !== '/audit';
       }
       if (isLocal) {
         // Interface 2 only sees Dashboard, M1, M2, M3, M6
-        return ['/', '/etablissements', '/infrastructures', '/effectifs', '/communications'].includes(item.href);
+        return ['/', '/etablissements', '/infrastructures', '/effectifs', '/communications', '/maintenance', '/rapports-annuels'].includes(item.href) || (hasAnyRole(userRole, [ROLES.PROVISEUR]) && item.href === '/admin');
       }
       if (isArrondissementResp) {
-        return ['/', '/admin', '/mobilier', '/carte', '/rapports'].includes(item.href);
+        return ['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/maintenance', '/carte', '/rapports', '/rapports-annuels'].includes(item.href);
       }
       // Interface 3 (Observer/Lambda) sees everything except Admin (M8), Audit logs and predictions
       return !['/admin', '/audit', '/predictions'].includes(item.href);

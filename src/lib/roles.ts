@@ -14,7 +14,8 @@ export const ROLES = {
 } as const;
 
 const ROLE_ALIASES: Record<string, string> = {
-  "Administrateur DSE": ROLES.SUPER_ADMIN,
+  // Legacy database values represented the business administrator, not the technical SuperAdmin.
+  "Administrateur DSE": ROLES.DIRECTEUR_DSE,
   "Directeurs d'école": ROLES.DIRECTEUR_ECOLE,
   "Directeurs d'Ã©cole": ROLES.DIRECTEUR_ECOLE,
   "Proviseur d'établissement": ROLES.PROVISEUR,
@@ -40,7 +41,6 @@ export function hasAnyRole(role: string | null | undefined, allowedRoles: readon
 
 export const SUPER_ADMIN_ROLES = [
   ROLES.SUPER_ADMIN,
-  ROLES.ADMIN_DSE_LEGACY,
 ] as const;
 
 export const DSE_ROLES = [

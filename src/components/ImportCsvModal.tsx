@@ -1,6 +1,13 @@
 import React, { useState } from 'react';
 import { useAuth } from './AuthProvider.tsx';
-import { Upload, X, AlertCircle, CheckCircle2, AlertTriangle, Download, FileSpreadsheet, RefreshCw } from 'lucide-react';
+import { Upload, X, AlertCircle, CheckCircle2, AlertTriangle, Download, FileSpreadsheet, RefreshCw, Cloud } from 'lucide-react';
+
+declare global {
+  interface Window {
+    gapi?: any;
+    google?: any;
+  }
+}
 
 interface ImportCsvModalProps {
   isOpen: boolean;
@@ -14,16 +21,30 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
   const [report, setReport] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [driveLoading, setDriveLoading] = useState(false);
   const { token } = useAuth();
+
+  const driveClientId = import.meta.env.VITE_GOOGLE_DRIVE_CLIENT_ID as string | undefined;
+  const driveApiKey = import.meta.env.VITE_GOOGLE_DRIVE_API_KEY as string | undefined;
+  const driveAppId = import.meta.env.VITE_GOOGLE_DRIVE_APP_ID as string | undefined;
 
   if (!isOpen) return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
-      setReport(null);
-      setError(null);
+      acceptFile(e.target.files[0]);
     }
+  };
+
+  const acceptFile = (candidate: File) => {
+    const name = candidate.name.toLowerCase();
+    if (!name.endsWith('.csv') && !name.endsWith('.xlsx') && !name.endsWith('.xls') && !name.endsWith('.pdf')) {
+      setError('Format de fichier non supporte. Utilisez CSV, Excel ou PDF.');
+      return;
+    }
+    setFile(candidate);
+    setReport(null);
+    setError(null);
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -43,13 +64,101 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const droppedFile = e.dataTransfer.files[0];
       const ext = droppedFile.name.toLowerCase();
-      if (ext.endsWith('.csv') || ext.endsWith('.xlsx') || ext.endsWith('.xls')) {
+      if (ext.endsWith('.csv') || ext.endsWith('.xlsx') || ext.endsWith('.xls') || ext.endsWith('.pdf')) {
         setFile(droppedFile);
         setReport(null);
         setError(null);
       } else {
-        setError("Format de fichier non supporté. Veuillez déposer un fichier CSV ou Excel.");
+        setError("Format de fichier non supporté. Veuillez déposer un fichier CSV, Excel ou PDF.");
       }
+    }
+  };
+
+  const loadGoogleScripts = async () => {
+    const loadScript = (src: string) => new Promise<void>((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${src}"]`);
+      if (existing) return resolve();
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Impossible de charger Google Drive.'));
+      document.body.appendChild(script);
+    });
+    await loadScript('https://apis.google.com/js/api.js');
+    await loadScript('https://accounts.google.com/gsi/client');
+    await new Promise<void>((resolve, reject) => window.gapi.load('picker', { callback: resolve, onerror: reject }));
+  };
+
+  const chooseFromGoogleDrive = async () => {
+    if (!driveClientId || !driveApiKey || !driveAppId) {
+      setError('Google Drive necessite VITE_GOOGLE_DRIVE_CLIENT_ID, VITE_GOOGLE_DRIVE_API_KEY et VITE_GOOGLE_DRIVE_APP_ID dans .env.');
+      return;
+    }
+    setDriveLoading(true);
+    setError(null);
+    try {
+      await loadGoogleScripts();
+      await new Promise<void>((resolve, reject) => {
+        let completed = false;
+        const complete = (callback: () => void) => {
+          if (completed) return;
+          completed = true;
+          callback();
+        };
+
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: driveClientId,
+          scope: 'https://www.googleapis.com/auth/drive.readonly',
+          callback: (oauthResponse: any) => {
+            if (oauthResponse.error) {
+              complete(() => reject(new Error('Autorisation Google Drive refusee.')));
+              return;
+            }
+
+            try {
+              const picker = new window.google.picker.PickerBuilder()
+                .setDeveloperKey(driveApiKey)
+                .setAppId(driveAppId)
+                .setOAuthToken(oauthResponse.access_token)
+                .addView(new window.google.picker.DocsView().setMimeTypes('text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'))
+                .setCallback(async (pickerData: any) => {
+                  if (pickerData.action !== window.google.picker.Action.PICKED) {
+                    complete(resolve);
+                    return;
+                  }
+
+                  const selected = pickerData.docs?.[0];
+                  if (!selected) {
+                    complete(resolve);
+                    return;
+                  }
+
+                  try {
+                    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${selected.id}?alt=media`, {
+                      headers: { Authorization: `Bearer ${oauthResponse.access_token}` }
+                    });
+                    if (!response.ok) throw new Error('Le fichier Google Drive ne peut pas etre telecharge.');
+                    const blob = await response.blob();
+                    acceptFile(new File([blob], selected.name || 'google-drive-file', { type: blob.type }));
+                    complete(resolve);
+                  } catch (downloadError) {
+                    complete(() => reject(downloadError));
+                  }
+                })
+                .build();
+              picker.setVisible(true);
+            } catch (pickerError) {
+              complete(() => reject(pickerError));
+            }
+          }
+        });
+        tokenClient.requestAccessToken({ prompt: 'consent' });
+      });
+    } catch (driveError: any) {
+      setError(driveError.message || 'Erreur pendant la connexion a Google Drive.');
+    } finally {
+      setDriveLoading(false);
     }
   };
 
@@ -180,8 +289,9 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
               </div>
             )}
 
-            {/* Step 1: Upload Dropzone */}
+            {/* Step 1: Upload local or Google Drive */}
             {!report && (
+              <div className="space-y-3">
               <div 
                 className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
                   isDragActive 
@@ -199,7 +309,7 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
                 <input
                   id="file-upload"
                   type="file"
-                  accept=".csv,.xlsx,.xls"
+                  accept=".csv,.xlsx,.xls,.pdf"
                   onChange={handleFileChange}
                   className="hidden"
                 />
@@ -231,10 +341,15 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-slate-800">Faites glisser votre fichier ici, ou parcourez</p>
-                      <p className="text-xs text-slate-400 mt-1">Accepte les fichiers CSV et Excel (.xlsx, .xls)</p>
+                      <p className="text-xs text-slate-400 mt-1">Accepte CSV, Excel et PDF</p>
                     </div>
                   </div>
                 )}
+              </div>
+              <button type="button" onClick={chooseFromGoogleDrive} disabled={driveLoading} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+                <Cloud className="h-4 w-4" />
+                {driveLoading ? 'Connexion a Google Drive...' : 'Choisir dans Google Drive'}
+              </button>
               </div>
             )}
 
@@ -244,12 +359,19 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
                 <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-4 flex items-center gap-3">
                   <CheckCircle2 className="h-6 w-6 text-emerald-600 flex-shrink-0" />
                   <div>
-                    <h4 className="text-sm font-bold text-emerald-900">Analyse et traitement terminés</h4>
+                    <h4 className="text-sm font-bold text-emerald-900">{report.pdf ? 'PDF extrait avec succes' : 'Analyse et traitement termines'}</h4>
                     <p className="text-xs text-emerald-700 mt-0.5">
-                      {report.imported} fiches d'établissement ont été intégrées avec succès sur un total de {report.total} lignes lues.
+                      {report.pdf ? 'Le contenu est disponible en apercu. Verifiez-le puis saisissez les donnees structurees dans Rapports scolaires annuels.' : `${report.imported} fiches d'etablissement ont ete integrees avec succes sur un total de ${report.total} lignes lues.`}
                     </p>
                   </div>
                 </div>
+
+                {report.pdf && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-950 p-4">
+                    <p className="mb-2 text-xs font-bold text-slate-300">Apercu du texte extrait</p>
+                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-[11px] text-slate-200">{report.textPreview}</pre>
+                  </div>
+                )}
 
                 {/* KPI metrics row */}
                 <div className="grid grid-cols-4 gap-4">

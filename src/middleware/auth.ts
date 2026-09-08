@@ -4,7 +4,16 @@ import { DecodedIdToken } from 'firebase-admin/auth';
 import { verifySession } from '../lib/auth-security.ts';
 
 export interface AuthRequest extends Request {
-  user?: DecodedIdToken & { id?: number; role?: string };
+  user?: DecodedIdToken & {
+    id?: number;
+    role?: string;
+    etablissementId?: number | null;
+    arrondissement?: string | null;
+    nom?: string | null;
+    prenom?: string | null;
+    telephone?: string | null;
+    rights?: string | null;
+  };
 }
 
 export const requireAuth = async (

@@ -4,7 +4,7 @@ import { useAuth } from '../components/AuthProvider.tsx';
 import { Building2, Plus, Search, Upload } from 'lucide-react';
 import { EtablissementForm } from '../components/EtablissementForm.tsx';
 import { ImportCsvModal } from '../components/ImportCsvModal.tsx';
-import { DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { DSE_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Etablissements() {
   const [etablissements, setEtablissements] = useState<any[]>([]);
@@ -20,7 +20,7 @@ export default function Etablissements() {
 
   const { token, user } = useAuth();
   const userRole = user?.role;
-  const canWrite = hasAnyRole(userRole, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES]);
+  const canWrite = hasAnyRole(userRole, DSE_ROLES);
 
   const fetchEtablissements = async () => {
     if (!token) return;
@@ -127,7 +127,7 @@ export default function Etablissements() {
               className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               <Upload className="-ml-1 mr-2 h-4 w-4 text-gray-500" aria-hidden="true" />
-              Importer CSV
+              Importer fichiers
             </button>
             <button
               type="button"

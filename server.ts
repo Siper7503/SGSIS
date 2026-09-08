@@ -5,15 +5,16 @@ import { createServer as createViteServer } from "vite";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { getOrCreateUser } from "./src/db/users.ts";
 import { db } from "./src/db/index.ts";
-import { etablissements, effectifs, constructions, infrastructures, mobilier, communications, communicationReceipts, incidents, wash, tice, auditLogs, users } from "./src/db/schema.ts";
+import { etablissements, effectifs, constructions, infrastructures, mobilier, communications, communicationReceipts, incidents, wash, tice, auditLogs, annualReports, users } from "./src/db/schema.ts";
 import { eq, and, ilike, ne, sql } from "drizzle-orm";
 import multer from "multer";
 import * as xlsx from "xlsx";
 import Papa from "papaparse";
+import { PDFParse } from "pdf-parse";
 import { GoogleGenAI } from "@google/genai";
 import bcrypt from "bcryptjs";
 import { createOneTimeToken, hashSecret, secretsMatch, signSession } from "./src/lib/auth-security.ts";
-import { ADMIN_MANAGED_ROLES, ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, MANAGEMENT_ROLES, ROLES, SCHOOL_USER_ROLES, SCHOOL_WRITE_ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from "./src/lib/roles.ts";
+import { ADMIN_MANAGED_ROLES, ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SCHOOL_USER_ROLES, SCHOOL_WRITE_ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from "./src/lib/roles.ts";
 import { createFacilitiesRouter } from "./src/server/routes/facilities.ts";
 
 interface SimulatedEmail {
@@ -116,6 +117,10 @@ function canManageUsers(role?: string | null): boolean {
   return hasAnyRole(role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES]);
 }
 
+function canCreateUsers(role?: string | null): boolean {
+  return canManageUsers(role) || hasAnyRole(role, [ROLES.PROVISEUR]);
+}
+
 function canCreateTargetRole(managerRole: string | null | undefined, targetRole: string | null | undefined): boolean {
   if (hasAnyRole(managerRole, SUPER_ADMIN_ROLES)) {
     return hasAnyRole(targetRole, ADMIN_MANAGED_ROLES);
@@ -125,7 +130,33 @@ function canCreateTargetRole(managerRole: string | null | undefined, targetRole:
     return hasAnyRole(targetRole, SCHOOL_USER_ROLES);
   }
 
+  if (hasAnyRole(managerRole, [ROLES.PROVISEUR])) {
+    return hasAnyRole(targetRole, [ROLES.SECRETAIRE_ADMIN, ROLES.SECRETAIRE_ADMIN_LEGACY]);
+  }
+
   return false;
+}
+
+function rightsForRole(role: string | null | undefined): string {
+  if (hasAnyRole(role, SUPER_ADMIN_ROLES)) {
+    return "super administration technique, gestion des droits d'acces et audit global";
+  }
+  if (hasAnyRole(role, ARRONDISSEMENT_ROLES)) {
+    return "supervision territoriale, lecture et controle des donnees de l'arrondissement";
+  }
+  if (hasAnyRole(role, SYSTEM_ADMIN_ROLES)) {
+    return "administration metier, pilotage, lecture, ecriture et recherche";
+  }
+  if (hasAnyRole(role, LOCAL_SCHOOL_ROLES)) {
+    return "lecture, ecriture et recherche sur les modules d'etablissement";
+  }
+  return "lecture et recherche";
+}
+
+function publicUser(user: any) {
+  if (!user) return null;
+  const { passwordHash, accessToken, otpCode, otpExpiresAt, ...safeUser } = user;
+  return safeUser;
 }
 
 function canManageTargetAccount(managerRole: string | null | undefined, targetRole: string | null | undefined): boolean {
@@ -141,7 +172,19 @@ function canManageTargetAccount(managerRole: string | null | undefined, targetRo
     return hasAnyRole(targetRole, SCHOOL_USER_ROLES);
   }
 
+  if (hasAnyRole(managerRole, [ROLES.PROVISEUR])) {
+    return hasAnyRole(targetRole, [ROLES.SECRETAIRE_ADMIN, ROLES.SECRETAIRE_ADMIN_LEGACY]);
+  }
+
   return false;
+}
+
+function canManageScopedTarget(manager: AuthRequest["user"], target: any): boolean {
+  if (!manager || !canManageTargetAccount(manager.role, target?.role)) return false;
+  if (hasAnyRole(manager.role, [ROLES.PROVISEUR])) {
+    return Boolean(manager.etablissementId && target?.etablissementId === manager.etablissementId);
+  }
+  return true;
 }
 
 function filterUsersForRequester(allUsers: any[], requester: AuthRequest["user"]): any[] {
@@ -157,11 +200,57 @@ function filterUsersForRequester(allUsers: any[], requester: AuthRequest["user"]
     return allUsers.filter((user) => user.arrondissement && requester?.arrondissement && user.arrondissement === requester.arrondissement);
   }
 
+  if (hasAnyRole(requester?.role, [ROLES.PROVISEUR])) {
+    return allUsers.filter((user) =>
+      hasAnyRole(user.role, [ROLES.SECRETAIRE_ADMIN, ROLES.SECRETAIRE_ADMIN_LEGACY]) &&
+      user.etablissementId && requester?.etablissementId && user.etablissementId === requester.etablissementId
+    );
+  }
+
+  return [];
+}
+
+function filterEstablishmentsForRequester(allEstablishments: any[], requester: AuthRequest["user"]): any[] {
+  if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) return allEstablishments;
+  if (hasAnyRole(requester?.role, ARRONDISSEMENT_ROLES)) {
+    return allEstablishments.filter((etablissement) => etablissement.arrondissement === requester?.arrondissement);
+  }
+  if (hasAnyRole(requester?.role, LOCAL_SCHOOL_ROLES)) {
+    return allEstablishments.filter((etablissement) => etablissement.id === requester?.etablissementId);
+  }
+  return [];
+}
+
+function filterRowsForRequester(rows: any[], requester: AuthRequest["user"]): any[] {
+  if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) return rows;
+  if (hasAnyRole(requester?.role, ARRONDISSEMENT_ROLES)) {
+    return rows.filter((row) => row.arrondissement === requester?.arrondissement || row.etablissementArrondissement === requester?.arrondissement);
+  }
+  if (hasAnyRole(requester?.role, LOCAL_SCHOOL_ROLES)) {
+    return rows.filter((row) => row.etablissementId === requester?.etablissementId);
+  }
   return [];
 }
 
 async function ensureDatabaseShape() {
   await db.execute(sql`alter table users add column if not exists lock_expires_at timestamp`);
+  await db.execute(sql`alter table users add column if not exists etablissement_id integer`);
+  await db.execute(sql`
+    create table if not exists annual_reports (
+      id serial primary key,
+      etablissement_id integer not null references etablissements(id),
+      annee_scolaire text not null,
+      statut text not null default 'Brouillon',
+      donnees jsonb not null default '{}'::jsonb,
+      created_by_id integer references users(id),
+      submitted_by_id integer references users(id),
+      validated_by_id integer references users(id),
+      created_at timestamp default now(),
+      updated_at timestamp default now(),
+      submitted_at timestamp,
+      validated_at timestamp
+    )
+  `);
 }
 
 async function startServer() {
@@ -232,7 +321,7 @@ async function startServer() {
         return;
       }
       const user = await getOrCreateUser(req.user.uid, req.user.email!);
-      res.json(user);
+      res.json(publicUser(user));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -241,7 +330,7 @@ async function startServer() {
   // Upgraded secure user registration endpoint
   app.post("/api/auth/register-secure", async (req, res) => {
     try {
-      const { nom, prenom, email, telephone, password, role, arrondissement } = req.body;
+      const { nom, prenom, email, telephone, password, role, arrondissement, etablissementId } = req.body;
       
       // 1. Strict Email Validation
       const emailValidation = validateEmailSecured(email);
@@ -275,14 +364,7 @@ async function startServer() {
       }
 
       // 4. Automatic "Droit de contrôle" (Pilotage / Lecture-Ecriture / Lecture-Recherche)
-      let rights = "lecture et recherche";
-      if (hasAnyRole(role, SUPER_ADMIN_ROLES)) {
-        rights = "super administration technique, gestion des droits d'acces et audit global";
-      } else if (hasAnyRole(role, SYSTEM_ADMIN_ROLES)) {
-        rights = "administration metier, pilotage, lecture, ecriture et recherche";
-      } else if (hasAnyRole(role, LOCAL_SCHOOL_ROLES)) {
-        rights = "lecture, ecriture et recherche sur les modules d'etablissement";
-      }
+      const rights = rightsForRole(role);
 
       // 5. Automatic Secure Token Code generation
       const accessToken = createOneTimeToken();
@@ -358,7 +440,7 @@ async function startServer() {
 
       res.json({ 
         success: true, 
-        user: userResult[0],
+        user: publicUser(userResult[0]),
         rights,
         accessToken,
         simulatedEmail,
@@ -523,9 +605,9 @@ async function startServer() {
       // 3. Réinitialiser le compteur d'échecs en cas de succès
       await db.update(users).set({ loginAttempts: 0, lockExpiresAt: null }).where(eq(users.id, user.id));
 
-      // 4. Vérifier si le profil requiert la 2FA (Uniquement pour Admin DSE, Directeur DSE et Responsable d'Arrondissement, en cas de connexion par mot de passe)
+      // 4. Les profils d'administration disposent d'une double vérification par mot de passe.
       const requires2FA = (
-        hasAnyRole(user.role, [...DSE_ROLES, ...ARRONDISSEMENT_ROLES])
+        hasAnyRole(user.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...ARRONDISSEMENT_ROLES])
       ) && !accessToken;
 
       if (requires2FA) {
@@ -572,12 +654,12 @@ async function startServer() {
           uid: user.uid, 
           email: user.email, 
           role: user.role, 
+          etablissementId: user.etablissementId,
           arrondissement: user.arrondissement,
           nom: user.nom,
           prenom: user.prenom,
           telephone: user.telephone,
-          rights: user.rights,
-          accessToken: user.accessToken
+          rights: user.rights
         }
       );
 
@@ -597,12 +679,12 @@ async function startServer() {
           uid: user.uid,
           email: user.email,
           role: user.role,
+          etablissementId: user.etablissementId,
           arrondissement: user.arrondissement,
           nom: user.nom,
           prenom: user.prenom,
           telephone: user.telephone,
-          rights: user.rights,
-          accessToken: user.accessToken
+          rights: user.rights
         }
       });
     } catch (error: any) {
@@ -672,8 +754,7 @@ async function startServer() {
           nom: user.nom,
           prenom: user.prenom,
           telephone: user.telephone,
-          rights: user.rights,
-          accessToken: user.accessToken
+          rights: user.rights
         }
       );
 
@@ -693,12 +774,12 @@ async function startServer() {
           uid: user.uid,
           email: user.email,
           role: user.role,
+          etablissementId: user.etablissementId,
           arrondissement: user.arrondissement,
           nom: user.nom,
           prenom: user.prenom,
           telephone: user.telephone,
-          rights: user.rights,
-          accessToken: user.accessToken
+          rights: user.rights
         }
       });
     } catch (error: any) {
@@ -780,7 +861,7 @@ async function startServer() {
 
   // Admin lock/unlock users according to the administration hierarchy.
   app.post("/api/users/unlock/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !canManageUsers(req.user.role)) {
+    if (!req.user || !canCreateUsers(req.user.role)) {
       res.status(403).json({ error: "Acces refuse : vous ne pouvez pas deverrouiller ou autoriser ce compte." });
       return;
     }
@@ -791,7 +872,7 @@ async function startServer() {
         res.status(404).json({ error: "Utilisateur non trouvé" });
         return;
       }
-      if (!canManageTargetAccount(req.user.role, targetUsers[0].role)) {
+      if (!canManageScopedTarget(req.user, targetUsers[0])) {
         res.status(403).json({ error: "Acces refuse : vous ne pouvez pas gerer ce compte." });
         return;
       }
@@ -816,14 +897,14 @@ async function startServer() {
         details: { unlockedUser: updated[0].email, byAdmin: req.user.email }
       });
 
-      res.json({ success: true, user: updated[0] });
+      res.json({ success: true, user: publicUser(updated[0]) });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
   app.post("/api/users/lock/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !canManageUsers(req.user.role)) {
+    if (!req.user || !canCreateUsers(req.user.role)) {
       res.status(403).json({ error: "Acces refuse : vous ne pouvez pas bloquer ce compte." });
       return;
     }
@@ -834,7 +915,7 @@ async function startServer() {
         res.status(404).json({ error: "Utilisateur non trouvé" });
         return;
       }
-      if (!canManageTargetAccount(req.user.role, targetUsers[0].role)) {
+      if (!canManageScopedTarget(req.user, targetUsers[0])) {
         res.status(403).json({ error: "Acces refuse : vous ne pouvez pas gerer ce compte." });
         return;
       }
@@ -855,7 +936,7 @@ async function startServer() {
         details: { lockedUser: updated[0].email, byAdmin: req.user.email }
       });
 
-      res.json({ success: true, user: updated[0] });
+      res.json({ success: true, user: publicUser(updated[0]) });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -863,15 +944,42 @@ async function startServer() {
 
   // Create users according to the administration hierarchy.
   app.post("/api/users", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !canManageUsers(req.user.role)) {
+    if (!req.user || !canCreateUsers(req.user.role)) {
       res.status(403).json({ error: "Acces refuse : vous n'avez pas les droits de creation d'utilisateurs." });
       return;
     }
     try {
-      const { nom, prenom, email, telephone, password, role, arrondissement } = req.body;
+      const { nom, prenom, email, telephone, password, role, arrondissement, etablissementId } = req.body;
 
       if (!canCreateTargetRole(req.user.role, role)) {
         res.status(403).json({ error: "Acces refuse : ce role ne peut pas etre attribue par votre profil." });
+        return;
+      }
+
+      const targetEtablissementId = etablissementId ? Number(etablissementId) : null;
+      if (hasAnyRole(role, LOCAL_SCHOOL_ROLES) && !targetEtablissementId) {
+        res.status(400).json({ error: "L'etablissement est obligatoire pour un compte scolaire." });
+        return;
+      }
+      if (hasAnyRole(req.user.role, [ROLES.PROVISEUR]) && targetEtablissementId !== req.user.etablissementId) {
+        res.status(403).json({ error: "Un proviseur ne peut creer un compte que pour son propre etablissement." });
+        return;
+      }
+      if (targetEtablissementId) {
+        const targetEstablishments = await db.select({ arrondissement: etablissements.arrondissement })
+          .from(etablissements)
+          .where(eq(etablissements.id, targetEtablissementId));
+        if (targetEstablishments.length === 0) {
+          res.status(400).json({ error: "L'etablissement rattache est introuvable." });
+          return;
+        }
+        if (hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) && targetEstablishments[0].arrondissement !== req.user.arrondissement) {
+          res.status(403).json({ error: "Un responsable d'arrondissement ne peut creer un compte que dans son arrondissement." });
+          return;
+        }
+      }
+      if (hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) && arrondissement && arrondissement !== req.user.arrondissement) {
+        res.status(403).json({ error: "Le compte doit rester rattache a votre arrondissement." });
         return;
       }
 
@@ -934,9 +1042,10 @@ async function startServer() {
         prenom,
         telephone: cleanPhone,
         role,
+        etablissementId: targetEtablissementId,
         rights,
         accessToken: hashSecret(accessToken),
-        arrondissement: arrondissement || null,
+        arrondissement: hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) ? req.user.arrondissement || null : arrondissement || null,
         passwordHash: hash,
         loginAttempts: 0,
         isLocked: false,
@@ -961,7 +1070,7 @@ async function startServer() {
         sentAt: new Date().toISOString()
       });
 
-      res.json({ success: true, user: createdUser[0] });
+      res.json({ success: true, user: publicUser(createdUser[0]) });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -969,7 +1078,7 @@ async function startServer() {
 
   // DELETE a user (reject access or delete completely)
   app.delete("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !canManageUsers(req.user.role)) {
+    if (!req.user || !canCreateUsers(req.user.role)) {
       res.status(403).json({ error: "Acces refuse : vous ne pouvez pas supprimer ce compte." });
       return;
     }
@@ -992,7 +1101,7 @@ async function startServer() {
       }
 
       const userToDelete = usersFound[0];
-      if (!canManageTargetAccount(req.user.role, userToDelete.role)) {
+      if (!canManageScopedTarget(req.user, userToDelete)) {
         res.status(403).json({ error: "Acces refuse : vous ne pouvez pas supprimer ce compte." });
         return;
       }
@@ -1011,11 +1120,101 @@ async function startServer() {
       await db.update(auditLogs).set({ userId: null }).where(eq(auditLogs.userId, targetId));
       await db.update(communications).set({ auteurId: null }).where(eq(communications.auteurId, targetId));
       await db.update(incidents).set({ signaleParId: null }).where(eq(incidents.signaleParId, targetId));
+      await db.update(annualReports).set({
+        createdById: null,
+        submittedById: null,
+        validatedById: null
+      }).where(eq(annualReports.createdById, targetId));
+      await db.update(annualReports).set({ submittedById: null }).where(eq(annualReports.submittedById, targetId));
+      await db.update(annualReports).set({ validatedById: null }).where(eq(annualReports.validatedById, targetId));
 
       // Finally, delete the user
       await db.delete(users).where(eq(users.id, targetId));
 
       res.json({ success: true, message: `Utilisateur ${userToDelete.email} supprimé avec succès.` });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
+    if (!req.user || !canCreateUsers(req.user.role)) {
+      res.status(403).json({ error: "Acces refuse : vous ne pouvez pas modifier ce compte." });
+      return;
+    }
+    try {
+      const targetId = Number(req.params.id);
+      const targetUsers = await db.select().from(users).where(eq(users.id, targetId));
+      if (targetUsers.length === 0) {
+        res.status(404).json({ error: "Utilisateur non trouve." });
+        return;
+      }
+      const target = targetUsers[0];
+      if (!canManageScopedTarget(req.user, target)) {
+        res.status(403).json({ error: "Acces refuse : vous ne pouvez pas modifier ce compte." });
+        return;
+      }
+
+      const { nom, prenom, telephone, role, arrondissement, etablissementId, password } = req.body;
+      const nextRole = role || target.role;
+      if (!canCreateTargetRole(req.user.role, nextRole)) {
+        res.status(403).json({ error: "Acces refuse : ce role ne peut pas etre attribue par votre profil." });
+        return;
+      }
+      const nextEtablissementId = etablissementId === undefined ? target.etablissementId : (etablissementId ? Number(etablissementId) : null);
+      if (hasAnyRole(nextRole, LOCAL_SCHOOL_ROLES) && !nextEtablissementId) {
+        res.status(400).json({ error: "L'etablissement est obligatoire pour un compte scolaire." });
+        return;
+      }
+      if (hasAnyRole(req.user.role, [ROLES.PROVISEUR]) && nextEtablissementId !== req.user.etablissementId) {
+        res.status(403).json({ error: "Un proviseur ne peut modifier que son etablissement." });
+        return;
+      }
+      if (nextEtablissementId) {
+        const targetEstablishments = await db.select({ arrondissement: etablissements.arrondissement })
+          .from(etablissements)
+          .where(eq(etablissements.id, nextEtablissementId));
+        if (targetEstablishments.length === 0) {
+          res.status(400).json({ error: "L'etablissement rattache est introuvable." });
+          return;
+        }
+        if (hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) && targetEstablishments[0].arrondissement !== req.user.arrondissement) {
+          res.status(403).json({ error: "Un responsable d'arrondissement ne peut gerer qu'un compte de son arrondissement." });
+          return;
+        }
+      }
+      if (hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) && arrondissement && arrondissement !== req.user.arrondissement) {
+        res.status(403).json({ error: "Le compte doit rester rattache a votre arrondissement." });
+        return;
+      }
+
+      const updates: any = {
+        nom: nom ?? target.nom,
+        prenom: prenom ?? target.prenom,
+        telephone: telephone ?? target.telephone,
+        role: nextRole,
+        rights: rightsForRole(nextRole),
+        arrondissement: hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) ? req.user.arrondissement || target.arrondissement : arrondissement ?? target.arrondissement,
+        etablissementId: nextEtablissementId
+      };
+      if (password) {
+        const passwordValidation = validatePasswordSecured(password);
+        if (!passwordValidation.isValid) {
+          res.status(400).json({ error: passwordValidation.error });
+          return;
+        }
+        updates.passwordHash = await bcrypt.hash(password, 10);
+      }
+
+      const updated = await db.update(users).set(updates).where(eq(users.id, targetId)).returning();
+      await db.insert(auditLogs).values({
+        userId: req.user.id || null,
+        action: "MODIFICATION_UTILISATEUR",
+        entityType: "users",
+        entityId: targetId,
+        details: { email: target.email, modifiedBy: req.user.email }
+      });
+      res.json({ success: true, user: publicUser(updated[0]) });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1058,14 +1257,14 @@ async function startServer() {
   app.get("/api/etablissements", requireAuth, async (req: AuthRequest, res) => {
     try {
       const results = await db.select().from(etablissements);
-      res.json(results);
+      res.json(filterEstablishmentsForRequester(results, req.user));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
   app.post("/api/etablissements", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture requis.")) return;
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : la gestion des établissements est réservée au Directeur DSE.")) return;
     try {
       const { nom, type, arrondissement, statut, nomDirecteur, coordonnees, force } = req.body;
 
@@ -1183,7 +1382,7 @@ async function startServer() {
   });
 
   app.put("/api/etablissements/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture requis.")) return;
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : la gestion des établissements est réservée au Directeur DSE.")) return;
     try {
       const { nom, type, arrondissement, statut, nomDirecteur, coordonnees, archived, force } = req.body;
       const id = parseInt(req.params.id);
@@ -1269,7 +1468,7 @@ async function startServer() {
 
   // Archivage logique au lieu de suppression définitive (SF-02)
   app.delete("/api/etablissements/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'archivage requis.")) return;
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : l'archivage des établissements est réservé au Directeur DSE.")) return;
     try {
       const id = parseInt(req.params.id);
       const updated = await db.update(etablissements).set({
@@ -1297,7 +1496,7 @@ async function startServer() {
   });
 
   app.post("/api/etablissements/bulk", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture requis.")) return;
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : l'importation des établissements est réservée au Directeur DSE.")) return;
     try {
       const data = req.body;
       if (!Array.isArray(data)) {
@@ -1355,7 +1554,7 @@ async function startServer() {
   });
 
   app.post("/api/etablissements/upload", requireAuth, upload.single("file"), async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture requis.")) return;
+    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : l'importation des établissements est réservée au Directeur DSE.")) return;
     try {
       const file = (req as any).file;
       if (!file) {
@@ -1374,8 +1573,29 @@ async function startServer() {
         const workbook = xlsx.read(file.buffer, { type: 'buffer' });
         const firstSheet = workbook.SheetNames[0];
         parsedData = xlsx.utils.sheet_to_json(workbook.Sheets[firstSheet]);
+      } else if (filename.endsWith('.pdf')) {
+        const parser = new PDFParse({ data: file.buffer });
+        const pdfResult = await parser.getText();
+        await parser.destroy();
+        const extractedText = pdfResult.text?.trim() || '';
+        if (!extractedText) {
+          res.status(400).json({ error: "Le PDF ne contient pas de texte exploitable. Pour un PDF scanne, utilisez la saisie manuelle ou un PDF avec OCR." });
+          return;
+        }
+        res.json({
+          pdf: true,
+          filename: file.originalname,
+          pages: extractedText.split('\f').length,
+          total: 0,
+          imported: 0,
+          duplicates: 0,
+          errors: 0,
+          details: ["PDF lu avec succes. Les tableaux PDF sont affiches en apercu et doivent etre verifies avant saisie dans Rapports scolaires annuels."],
+          textPreview: extractedText.slice(0, 60000)
+        });
+        return;
       } else {
-        res.status(400).json({ error: "Format de fichier non supporté. Utilisez CSV ou Excel." });
+        res.status(400).json({ error: "Format de fichier non supporté. Utilisez CSV, Excel ou PDF." });
         return;
       }
 
@@ -1577,7 +1797,7 @@ async function startServer() {
         })
         .from(etablissements)
         .leftJoin(infrastructures, eq(infrastructures.etablissementId, etablissements.id));
-      res.json(results);
+      res.json(filterRowsForRequester(results, req.user));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1605,6 +1825,10 @@ async function startServer() {
 
       if (!etablissementId) {
         res.status(400).json({ error: "L'ID de l'établissement est requis." });
+        return;
+      }
+      if (hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES) && Number(etablissementId) !== req.user?.etablissementId) {
+        res.status(403).json({ error: "Vous ne pouvez modifier que les infrastructures de votre etablissement." });
         return;
       }
 
@@ -1670,7 +1894,7 @@ async function startServer() {
         })
         .from(etablissements)
         .leftJoin(effectifs, eq(effectifs.etablissementId, etablissements.id));
-      res.json(results);
+      res.json(filterRowsForRequester(results, req.user));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1682,6 +1906,10 @@ async function startServer() {
       const { etablissementId, anneeScolaire, elevesFilles, elevesGarcons, enseignants, personnelsAdmin } = req.body;
       if (!etablissementId || !anneeScolaire) {
         res.status(400).json({ error: "L'ID de l'établissement et l'année scolaire sont requis." });
+        return;
+      }
+      if (hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES) && Number(etablissementId) !== req.user?.etablissementId) {
+        res.status(403).json({ error: "Vous ne pouvez modifier que les effectifs de votre etablissement." });
         return;
       }
       const existing = await db.select().from(effectifs).where(
@@ -1738,7 +1966,7 @@ async function startServer() {
         .from(etablissements)
         .leftJoin(mobilier, eq(mobilier.etablissementId, etablissements.id))
         .leftJoin(effectifs, eq(effectifs.etablissementId, etablissements.id));
-      res.json(results);
+      res.json(filterRowsForRequester(results, req.user));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1843,7 +2071,7 @@ async function startServer() {
   app.get("/api/constructions", requireAuth, async (req: AuthRequest, res) => {
     try {
       const results = await db.select().from(constructions).orderBy(constructions.createdAt);
-      res.json(results);
+      res.json(filterRowsForRequester(results, req.user));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1926,7 +2154,17 @@ async function startServer() {
   app.get("/api/communications", requireAuth, async (req: AuthRequest, res) => {
     try {
       const results = await db.select().from(communications).orderBy(communications.createdAt);
-      res.json(results);
+      if (hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) {
+        res.json(results);
+        return;
+      }
+      if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)) {
+        res.json(results.filter((communication) =>
+          communication.ciblage === "Tous les établissements" || communication.ciblage === req.user?.arrondissement
+        ));
+        return;
+      }
+      res.json([]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -2250,12 +2488,38 @@ async function startServer() {
 
   // Admin: Users
   app.get("/api/users", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, MANAGEMENT_ROLES, "Acces refuse : la liste des utilisateurs est reservee aux administrateurs.")) return;
+    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ROLES.PROVISEUR], "Acces refuse : la liste des utilisateurs est reservee aux profils habilites.")) return;
     try {
       const results = await db.select().from(users).orderBy(users.createdAt);
-      res.json(filterUsersForRequester(results, req.user));
+      res.json(filterUsersForRequester(results, req.user).map(publicUser));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Technical health endpoint: exposes status only, never database credentials.
+  app.get("/api/system/health", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, SUPER_ADMIN_ROLES, "Acces refuse : la supervision technique est reservee au SuperAdmin.")) return;
+    try {
+      await db.execute(sql`select 1`);
+      res.json({
+        status: "operational",
+        database: "connected",
+        environment: process.env.NODE_ENV || "development",
+        security: {
+          maxLoginAttempts: MAX_LOGIN_ATTEMPTS,
+          lockDurationMinutes: AUTO_LOCK_MINUTES,
+          twoFactorForAdministrators: true
+        },
+        checkedAt: new Date().toISOString()
+      });
+    } catch (error: any) {
+      res.status(503).json({
+        status: "degraded",
+        database: "unavailable",
+        error: error.message,
+        checkedAt: new Date().toISOString()
+      });
     }
   });
 
@@ -2276,6 +2540,156 @@ async function startServer() {
       console.error("Failed to log audit", e);
     }
   };
+
+  // Annual school reports: structured data with a secondary-school approval workflow.
+  app.get("/api/annual-reports", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...ARRONDISSEMENT_ROLES, ...LOCAL_SCHOOL_ROLES], "Acces refuse : vous n'avez pas acces aux rapports annuels.")) return;
+    try {
+      const reports = await db.select({
+        report: annualReports,
+        etablissement: etablissements
+      }).from(annualReports).leftJoin(etablissements, eq(annualReports.etablissementId, etablissements.id));
+
+      const visible = reports.filter((row) => {
+        if (hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) return true;
+        if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)) return Boolean(row.etablissement?.arrondissement === req.user?.arrondissement);
+        return Boolean(req.user?.etablissementId && row.report.etablissementId === req.user.etablissementId);
+      });
+      res.json(visible);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/annual-reports", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...LOCAL_SCHOOL_ROLES], "Acces refuse : vous n'avez pas acces aux rapports annuels.")) return;
+    try {
+      const { etablissementId, anneeScolaire, donnees, action = "save" } = req.body;
+      const targetId = Number(etablissementId);
+      if (!targetId || !anneeScolaire || !donnees || typeof donnees !== "object") {
+        res.status(400).json({ error: "L'etablissement, l'annee scolaire et les donnees sont obligatoires." });
+        return;
+      }
+
+      const targetRows = await db.select().from(etablissements).where(eq(etablissements.id, targetId));
+      if (targetRows.length === 0) {
+        res.status(404).json({ error: "Etablissement introuvable." });
+        return;
+      }
+      const target = targetRows[0];
+      const isDse = hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES]);
+      const isLocal = hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES);
+      const isSecretary = hasAnyRole(req.user?.role, [ROLES.SECRETAIRE_ADMIN, ROLES.SECRETAIRE_ADMIN_LEGACY]);
+      const isProviseur = hasAnyRole(req.user?.role, [ROLES.PROVISEUR]);
+      if (isLocal && req.user?.etablissementId !== targetId) {
+        res.status(403).json({ error: "Vous ne pouvez renseigner que votre propre etablissement." });
+        return;
+      }
+      if (isLocal && !isDse && target.type === "Primaire" && !hasAnyRole(req.user?.role, [ROLES.DIRECTEUR_ECOLE])) {
+        res.status(403).json({ error: "Pour une ecole primaire, seul le Directeur d'ecole renseigne le rapport." });
+        return;
+      }
+      if (isSecretary && target.type !== "Secondaire") {
+        res.status(403).json({ error: "Le secretaire ne peut renseigner que les donnees d'un etablissement secondaire." });
+        return;
+      }
+      if (isProviseur && target.type !== "Secondaire") {
+        res.status(403).json({ error: "Le proviseur ne peut traiter que les donnees d'un etablissement secondaire." });
+        return;
+      }
+
+      const existing = await db.select().from(annualReports).where(and(
+        eq(annualReports.etablissementId, targetId),
+        eq(annualReports.anneeScolaire, String(anneeScolaire))
+      )).limit(1);
+      let statut = existing[0]?.statut || "Brouillon";
+      if (isLocal && existing[0] && !["Brouillon", "Rejete"].includes(existing[0].statut) && !(isProviseur && existing[0].statut === "Soumis au proviseur")) {
+        res.status(409).json({ error: "Ce rapport est deja transmis et ne peut plus etre modifie a ce stade du circuit." });
+        return;
+      }
+      if (action === "save" && isLocal && statut === "Rejete") {
+        statut = "Brouillon";
+      }
+      if (action === "submit") {
+        if (isSecretary) {
+          statut = "Soumis au proviseur";
+        } else {
+          statut = "Soumis au DSE";
+        }
+      }
+
+      const values = {
+        etablissementId: targetId,
+        anneeScolaire: String(anneeScolaire),
+        statut,
+        donnees,
+        createdById: existing[0]?.createdById || req.user?.id || null,
+        submittedById: action === "submit" ? req.user?.id || null : existing[0]?.submittedById || null,
+        submittedAt: action === "submit" ? new Date() : existing[0]?.submittedAt || null,
+        updatedAt: new Date()
+      };
+      const saved = existing.length > 0
+        ? await db.update(annualReports).set(values).where(eq(annualReports.id, existing[0].id)).returning()
+        : await db.insert(annualReports).values(values).returning();
+
+      await logAudit(req.user?.id, action === "submit" ? "SOUMISSION_RAPPORT_ANNUEL" : "SAUVEGARDE_RAPPORT_ANNUEL", "annual_reports", saved[0].id, { etablissementId: targetId, anneeScolaire, statut });
+      res.json({ success: true, report: saved[0] });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/annual-reports/:id/decision", requireAuth, async (req: AuthRequest, res) => {
+    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ROLES.PROVISEUR], "Acces refuse : profil non habilite.")) return;
+    try {
+      const reportId = Number(req.params.id);
+      const { decision } = req.body;
+      const rows = await db.select().from(annualReports).where(eq(annualReports.id, reportId));
+      if (rows.length === 0) {
+        res.status(404).json({ error: "Rapport annuel introuvable." });
+        return;
+      }
+      const report = rows[0];
+      const isDse = hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES]);
+      const isProviseur = hasAnyRole(req.user?.role, [ROLES.PROVISEUR]);
+      if (isProviseur && req.user?.etablissementId !== report.etablissementId) {
+        res.status(403).json({ error: "Vous ne pouvez valider que le rapport de votre etablissement." });
+        return;
+      }
+      if (!isDse && !isProviseur) {
+        res.status(403).json({ error: "Seul le proviseur ou le Directeur DSE peut traiter ce rapport." });
+        return;
+      }
+      if (decision === "approuver" && isProviseur) {
+        if (report.statut !== "Soumis au proviseur") {
+          res.status(409).json({ error: "Seul un rapport soumis au proviseur peut etre approuve." });
+          return;
+        }
+        const updated = await db.update(annualReports).set({ statut: "Soumis au DSE", updatedAt: new Date(), validatedById: req.user?.id || null }).where(eq(annualReports.id, reportId)).returning();
+        await logAudit(req.user?.id, "APPROBATION_PROVISEUR_RAPPORT", "annual_reports", reportId, {});
+        res.json({ success: true, report: updated[0] });
+        return;
+      }
+      if (!isDse) {
+        res.status(403).json({ error: "La validation finale est reservee au Directeur DSE." });
+        return;
+      }
+      const nextStatus = decision === "valider" ? "Valide" : decision === "rejeter" ? "Rejete" : null;
+      if (!nextStatus) {
+        res.status(400).json({ error: "Decision invalide." });
+        return;
+      }
+      if (report.statut !== "Soumis au DSE") {
+        res.status(409).json({ error: "La decision finale ne peut porter que sur un rapport soumis a la DSE." });
+        return;
+      }
+      const updated = await db.update(annualReports).set({ statut: nextStatus, updatedAt: new Date(), validatedById: req.user?.id || null, validatedAt: decision === "valider" ? new Date() : null }).where(eq(annualReports.id, reportId)).returning();
+      await logAudit(req.user?.id, decision === "valider" ? "VALIDATION_RAPPORT_ANNUEL" : "REJET_RAPPORT_ANNUEL", "annual_reports", reportId, { statut: nextStatus });
+      res.json({ success: true, report: updated[0] });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   app.use(createFacilitiesRouter(logAudit));
 
@@ -2563,7 +2977,7 @@ async function startServer() {
       }).from(auditLogs)
         .leftJoin(users, eq(auditLogs.userId, users.id))
         .orderBy(auditLogs.createdAt);
-      res.json(results);
+      res.json(results.map((row) => ({ ...row, user: publicUser(row.user) })));
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -2588,16 +3002,19 @@ async function startServer() {
       let filteredWashes = washes;
       let filteredTices = tices;
 
-      const isArrResp = req.user?.role === "Responsable d'arrondissement" || req.user?.role === "Responsable d'Arrondissement";
+      const isArrResp = hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES);
+      const isLocalActor = hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES);
       const userArr = req.user?.arrondissement;
 
-      if (isArrResp && userArr) {
-        filteredEtabs = etabs.filter(e => e.arrondissement && e.arrondissement.toLowerCase() === userArr.toLowerCase());
+      if (isArrResp || isLocalActor) {
+        filteredEtabs = filterEstablishmentsForRequester(etabs, req.user);
         const allowedEtabIds = new Set(filteredEtabs.map(e => e.id));
 
         filteredInfras = infras.filter(i => allowedEtabIds.has(i.etablissementId));
         filteredEffs = effs.filter(ef => allowedEtabIds.has(ef.etablissementId));
-        filteredConstrs = constrs.filter(c => c.arrondissement && c.arrondissement.toLowerCase() === userArr.toLowerCase());
+        filteredConstrs = isArrResp && userArr
+          ? constrs.filter(c => c.arrondissement && c.arrondissement.toLowerCase() === userArr.toLowerCase())
+          : [];
         filteredIncs = incs.filter(inc => inc.etablissementId && allowedEtabIds.has(inc.etablissementId));
         filteredWashes = washes.filter(w => w.etablissementId && allowedEtabIds.has(w.etablissementId));
         filteredTices = tices.filter(t => t.etablissementId && allowedEtabIds.has(t.etablissementId));

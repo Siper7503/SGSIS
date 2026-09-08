@@ -15,9 +15,11 @@ import {
   Check, 
   AlertCircle, 
   ShieldAlert, 
-  Phone 
+  Phone,
+  Pencil,
+  Trash2
 } from 'lucide-react';
-import { DSE_ROLES, SCHOOL_USER_ROLES, SUPER_ADMIN_ROLES, hasAnyRole, ROLES } from '../lib/roles.ts';
+import { ADMIN_MANAGED_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SCHOOL_USER_ROLES, SUPER_ADMIN_ROLES, hasAnyRole, ROLES } from '../lib/roles.ts';
 
 export default function Admin() {
   const [data, setData] = useState<any[]>([]);
@@ -37,18 +39,24 @@ export default function Admin() {
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<number | null>(null);
+  const [newEtablissementId, setNewEtablissementId] = useState('');
+  const [etablissements, setEtablissements] = useState<any[]>([]);
 
   const isSuperAdmin = hasAnyRole(user?.role, SUPER_ADMIN_ROLES);
   const isDseAdmin = hasAnyRole(user?.role, DSE_ROLES);
-  const canCreateUsers = isSuperAdmin || isDseAdmin;
+  const isProviseur = hasAnyRole(user?.role, [ROLES.PROVISEUR]);
+  const canCreateUsers = isSuperAdmin || isDseAdmin || isProviseur;
 
   const rolesList = isSuperAdmin
-    ? [ROLES.DIRECTEUR_DSE, ROLES.RESPONSABLE_ARR]
-    : [...SCHOOL_USER_ROLES];
+    ? [...ADMIN_MANAGED_ROLES]
+    : isProviseur ? [ROLES.SECRETAIRE_ADMIN] : [...SCHOOL_USER_ROLES];
 
   useEffect(() => {
     setNewRole(rolesList[0] || ROLES.DIRECTEUR_ECOLE);
-  }, [isSuperAdmin, isDseAdmin]);
+  }, [isSuperAdmin, isDseAdmin, isProviseur]);
+
+  const needsEstablishment = hasAnyRole(newRole, LOCAL_SCHOOL_ROLES);
 
   const fetchData = async () => {
     if (!token) return;
@@ -70,6 +78,14 @@ export default function Admin() {
 
   useEffect(() => {
     fetchData();
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    apiFetch('/api/etablissements', { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => res.json())
+      .then((items) => setEtablissements(Array.isArray(items) ? items : []))
+      .catch(console.error);
   }, [token]);
 
   const handleLockUser = async (userId: number) => {
@@ -112,6 +128,39 @@ export default function Admin() {
     }
   };
 
+  const startEditing = (account: any) => {
+    setEditingUserId(account.id);
+    setNewEmail(account.email || '');
+    setNewNom(account.nom || '');
+    setNewPrenom(account.prenom || '');
+    setNewTelephone(account.telephone || '');
+    setNewRole(account.role || rolesList[0]);
+    setNewArrondissement(account.arrondissement || '');
+    setNewEtablissementId(account.etablissementId ? String(account.etablissementId) : '');
+    setNewPassword('');
+    setFormError(null);
+    setFormSuccess(null);
+    setShowAddForm(true);
+  };
+
+  const handleDeleteUser = async (userId: number) => {
+    if (!token || !confirm('Supprimer définitivement ce compte utilisateur ?')) return;
+    try {
+      setActionLoading(userId);
+      const res = await apiFetch(`/api/users/${userId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Erreur lors de la suppression.');
+      await fetchData();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token) return;
@@ -120,8 +169,8 @@ export default function Admin() {
     setSubmitting(true);
 
     try {
-      const res = await apiFetch('/api/users', {
-        method: 'POST',
+      const res = await apiFetch(editingUserId ? `/api/users/${editingUserId}` : '/api/users', {
+        method: editingUserId ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
@@ -133,7 +182,8 @@ export default function Admin() {
           telephone: newTelephone,
           password: newPassword,
           role: newRole,
-          arrondissement: newArrondissement || null
+          arrondissement: newArrondissement || null,
+          etablissementId: (isProviseur && user?.etablissementId) || newEtablissementId || null
         })
       });
 
@@ -142,7 +192,9 @@ export default function Admin() {
         throw new Error(d.error || "Une erreur est survenue lors de la création de l'utilisateur.");
       }
 
-      setFormSuccess(`L'utilisateur ${newPrenom} ${newNom} a été créé avec succès ! Un jeton d'accès sécurisé a été généré.`);
+      setFormSuccess(editingUserId
+        ? `Le compte de ${newPrenom} ${newNom} a ete modifie avec succes.`
+        : `L'utilisateur ${newPrenom} ${newNom} a ete cree avec succes ! Un jeton d'acces securise a ete genere.`);
       
       // Reset form fields
       setNewEmail('');
@@ -152,6 +204,8 @@ export default function Admin() {
       setNewPassword('');
       setNewRole(rolesList[0] || ROLES.DIRECTEUR_ECOLE);
       setNewArrondissement('');
+      setNewEtablissementId('');
+      setEditingUserId(null);
       setShowAddForm(false);
       
       // Refresh list
@@ -203,7 +257,7 @@ export default function Admin() {
           <div>
             <h3 className="font-bold text-amber-900 text-sm">Droits de gestion restreints</h3>
             <p className="text-xs text-amber-700 mt-1 leading-relaxed">
-              Vous êtes connecté avec le profil <strong>{user?.role}</strong>. L'accès en lecture est limité à votre périmètre. La création et la gestion des comptes sont réservées au SuperAdmin et au Directeur DSE.
+              Vous êtes connecté avec le profil <strong>{user?.role}</strong>. L'accès en lecture et en gestion est limité à votre périmètre.
             </p>
           </div>
         </div>
@@ -284,7 +338,7 @@ export default function Admin() {
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Mot de Passe Initial</label>
                 <input
                   type="password"
-                  required
+                  required={!editingUserId}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   className="block w-full rounded-xl border border-slate-200 py-2.5 px-3 text-slate-950 sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
@@ -321,6 +375,24 @@ export default function Admin() {
                   ))}
                 </select>
               </div>
+
+              {(!isSuperAdmin || needsEstablishment) && (
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Etablissement rattache</label>
+                  <select
+                    required
+                    value={isProviseur && user?.etablissementId ? String(user.etablissementId) : newEtablissementId}
+                    disabled={isProviseur}
+                    onChange={(e) => setNewEtablissementId(e.target.value)}
+                    className="block w-full rounded-xl border border-slate-200 py-2.5 px-3 text-slate-950 sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 bg-white disabled:bg-slate-100"
+                  >
+                    <option value="">Selectionner un etablissement</option>
+                    {etablissements.map((etab) => (
+                      <option key={etab.id} value={etab.id}>{etab.nom} ({etab.arrondissement})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end pt-2">
@@ -442,6 +514,25 @@ export default function Admin() {
                       ) : (
                         <div className="text-xs text-slate-400 italic">Modification interdite</div>
                       )
+                    )}
+                    {user?.email !== u.email && canCreateUsers && !hasAnyRole(u.role, SUPER_ADMIN_ROLES) && (
+                      <>
+                        <button
+                          onClick={() => startEditing(u)}
+                          className="inline-flex items-center px-2.5 py-1.5 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-xs font-bold text-blue-700 transition-colors"
+                          title="Modifier le compte"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(u.id)}
+                          disabled={actionLoading === u.id}
+                          className="inline-flex items-center px-2.5 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-xs font-bold text-rose-700 transition-colors disabled:opacity-50"
+                          title="Supprimer le compte"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </>
                     )}
                     <span className="inline-flex items-center rounded-lg bg-gray-50 border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-500">
                       UID: {u.id}

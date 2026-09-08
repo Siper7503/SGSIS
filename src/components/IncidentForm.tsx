@@ -9,7 +9,7 @@ interface IncidentFormProps {
 }
 
 export function IncidentForm({ onSuccess, onCancel }: IncidentFormProps) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [etablissements, setEtablissements] = useState<any[]>([]);
@@ -22,13 +22,13 @@ export function IncidentForm({ onSuccess, onCancel }: IncidentFormProps) {
           headers: { Authorization: `Bearer ${token}` }
         });
         const d = await res.json();
-        setEtablissements(d);
+        setEtablissements(Array.isArray(d) && user?.etablissementId ? d.filter((item: any) => item.id === user.etablissementId) : d);
       } catch (e) {
         console.error(e);
       }
     }
     fetchEtablissements();
-  }, [token]);
+  }, [token, user?.etablissementId]);
 
   const [formData, setFormData] = useState({
     etablissementId: '',

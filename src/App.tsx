@@ -21,6 +21,7 @@ import Maintenance from './pages/Maintenance.tsx';
 import Wash from './pages/Wash.tsx';
 import Tice from './pages/Tice.tsx';
 import Audit from './pages/Audit.tsx';
+import RapportsAnnuels from './pages/RapportsAnnuels.tsx';
 
 
 export default function App() {
@@ -37,6 +38,7 @@ export default function App() {
             <Route path="constructions" element={<Constructions />} />
             <Route path="communications" element={<Communications />} />
             <Route path="rapports" element={<Rapports />} />
+            <Route path="rapports-annuels" element={<RapportsAnnuels />} />
             <Route path="carte" element={<Carte />} />
             <Route path="predictions" element={<Predictions />} />
             <Route path="maintenance" element={<Maintenance />} />

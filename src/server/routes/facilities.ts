@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { db } from '../../db/index.ts';
-import { incidents, tice, wash } from '../../db/schema.ts';
+import { etablissements, incidents, tice, wash } from '../../db/schema.ts';
 import { eq } from 'drizzle-orm';
 import { requireAuth, AuthRequest } from '../../middleware/auth.ts';
-import { DSE_ROLES, hasAnyRole } from '../../lib/roles.ts';
+import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../../lib/roles.ts';
 
 type AuditLogger = (
   userId: number | null | undefined,
@@ -29,24 +29,48 @@ function requireDseRole(req: AuthRequest, res: import('express').Response): bool
   return true;
 }
 
+function requireIncidentReporter(req: AuthRequest, res: import('express').Response): boolean {
+  if (!hasAnyRole(req.user?.role, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES])) {
+    res.status(403).json({ error: "Acces refuse : seuls les responsables d'etablissement et la DSE peuvent signaler un incident." });
+    return false;
+  }
+  return true;
+}
+
 export function createFacilitiesRouter(logAudit: AuditLogger): Router {
   const router = Router();
 
-  router.get('/api/incidents', requireAuth, async (_req: AuthRequest, res) => {
+  router.get('/api/incidents', requireAuth, async (req: AuthRequest, res) => {
     try {
       const results = await db.select().from(incidents).orderBy(incidents.dateSignalement);
-      res.json(results);
+      if (hasAnyRole(req.user?.role, [...DSE_ROLES, ...SUPER_ADMIN_ROLES])) {
+        res.json(results);
+      } else if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES) && req.user?.arrondissement) {
+        const scopedEstablishments = await db.select({ id: etablissements.id })
+          .from(etablissements)
+          .where(eq(etablissements.arrondissement, req.user.arrondissement));
+        const allowedIds = new Set(scopedEstablishments.map((etablissement) => etablissement.id));
+        res.json(results.filter((incident) => incident.etablissementId && allowedIds.has(incident.etablissementId)));
+      } else if (req.user?.etablissementId) {
+        res.json(results.filter((incident) => incident.etablissementId === req.user?.etablissementId));
+      } else {
+        res.json([]);
+      }
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
   router.post('/api/incidents', requireAuth, async (req: AuthRequest, res) => {
-    if (!requireDseRole(req, res)) return;
+    if (!requireIncidentReporter(req, res)) return;
     try {
       const { etablissementId, type, description } = req.body;
       if (!type || typeof type !== 'string' || !description || typeof description !== 'string') {
         res.status(400).json({ error: "Le type et la description de l'incident sont obligatoires." });
+        return;
+      }
+      if (hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES) && Number(etablissementId) !== req.user?.etablissementId) {
+        res.status(403).json({ error: "Vous ne pouvez signaler un incident que dans votre propre etablissement." });
         return;
       }
       const inserted = await db.insert(incidents).values({
@@ -86,9 +110,17 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
     }
   });
 
-  router.get('/api/wash', requireAuth, async (_req: AuthRequest, res) => {
+  router.get('/api/wash', requireAuth, async (req: AuthRequest, res) => {
     try {
-      res.json(await db.select().from(wash));
+      const rows = await db.select({ record: wash, arrondissement: etablissements.arrondissement })
+        .from(wash)
+        .leftJoin(etablissements, eq(wash.etablissementId, etablissements.id));
+      const visible = hasAnyRole(req.user?.role, [...DSE_ROLES, ...SUPER_ADMIN_ROLES])
+        ? rows
+        : rows.filter((row) => hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)
+          ? row.arrondissement === req.user?.arrondissement
+          : row.record.etablissementId === req.user?.etablissementId);
+      res.json(visible.map((row) => ({ ...row.record, arrondissement: row.arrondissement })));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -122,9 +154,17 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
     }
   });
 
-  router.get('/api/tice', requireAuth, async (_req: AuthRequest, res) => {
+  router.get('/api/tice', requireAuth, async (req: AuthRequest, res) => {
     try {
-      res.json(await db.select().from(tice));
+      const rows = await db.select({ record: tice, arrondissement: etablissements.arrondissement })
+        .from(tice)
+        .leftJoin(etablissements, eq(tice.etablissementId, etablissements.id));
+      const visible = hasAnyRole(req.user?.role, [...DSE_ROLES, ...SUPER_ADMIN_ROLES])
+        ? rows
+        : rows.filter((row) => hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)
+          ? row.arrondissement === req.user?.arrondissement
+          : row.record.etablissementId === req.user?.etablissementId);
+      res.json(visible.map((row) => ({ ...row.record, arrondissement: row.arrondissement })));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

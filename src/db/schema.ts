@@ -6,6 +6,7 @@ export const users = pgTable('users', {
   uid: text('uid').notNull().unique(),
   email: text('email').notNull(),
   role: text('role').notNull().default('Directeur / Proviseur'),
+  etablissementId: integer('etablissement_id'),
   arrondissement: text('arrondissement'),
   passwordHash: text('password_hash'),
   nom: text('nom'),
@@ -146,6 +147,21 @@ export const auditLogs = pgTable('audit_logs', {
   entityId: integer('entity_id'),
   details: jsonb('details'),
   createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const annualReports = pgTable('annual_reports', {
+  id: serial('id').primaryKey(),
+  etablissementId: integer('etablissement_id').references(() => etablissements.id).notNull(),
+  anneeScolaire: text('annee_scolaire').notNull(),
+  statut: text('statut').notNull().default('Brouillon'),
+  donnees: jsonb('donnees').notNull().default({}),
+  createdById: integer('created_by_id').references(() => users.id),
+  submittedById: integer('submitted_by_id').references(() => users.id),
+  validatedById: integer('validated_by_id').references(() => users.id),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+  submittedAt: timestamp('submitted_at'),
+  validatedAt: timestamp('validated_at'),
 });
 
 export const communicationReceipts = pgTable('communication_receipts', {
