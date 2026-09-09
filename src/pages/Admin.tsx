@@ -13,6 +13,7 @@ import {
   Plus, 
   X, 
   Check, 
+  Copy,
   AlertCircle, 
   ShieldAlert, 
   Phone,
@@ -42,6 +43,8 @@ export default function Admin() {
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [newEtablissementId, setNewEtablissementId] = useState('');
   const [etablissements, setEtablissements] = useState<any[]>([]);
+  const [simulatedEmail, setSimulatedEmail] = useState<any | null>(null);
+  const [copiedToken, setCopiedToken] = useState(false);
 
   const isSuperAdmin = hasAnyRole(user?.role, SUPER_ADMIN_ROLES);
   const isDseAdmin = hasAnyRole(user?.role, DSE_ROLES);
@@ -84,7 +87,7 @@ export default function Admin() {
     if (!token) return;
     apiFetch('/api/etablissements', { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => res.json())
-      .then((items) => setEtablissements(Array.isArray(items) ? items : []))
+      .then((items) => setEtablissements(Array.isArray(items) ? [...items].sort((a, b) => Number(a.id) - Number(b.id)) : []))
       .catch(console.error);
   }, [token]);
 
@@ -192,6 +195,11 @@ export default function Admin() {
         throw new Error(d.error || "Une erreur est survenue lors de la création de l'utilisateur.");
       }
 
+      if (!editingUserId && d.simulatedEmail) {
+        setSimulatedEmail(d.simulatedEmail);
+        setCopiedToken(false);
+      }
+
       setFormSuccess(editingUserId
         ? `Le compte de ${newPrenom} ${newNom} a ete modifie avec succes.`
         : `L'utilisateur ${newPrenom} ${newNom} a ete cree avec succes ! Un jeton d'acces securise a ete genere.`);
@@ -215,6 +223,15 @@ export default function Admin() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const connectionToken = simulatedEmail?.body?.match(/SGSIED-[A-Za-z0-9_-]+/)?.[0] || null;
+
+  const copyConnectionToken = async () => {
+    if (!connectionToken) return;
+    await navigator.clipboard.writeText(connectionToken);
+    setCopiedToken(true);
+    window.setTimeout(() => setCopiedToken(false), 2000);
   };
 
   return (
@@ -413,6 +430,37 @@ export default function Admin() {
           <Check className="h-5 w-5 text-emerald-600 flex-shrink-0" />
           {formSuccess}
         </div>
+      )}
+
+      {simulatedEmail && (
+        <section className="overflow-hidden rounded-2xl border border-cyan-900 bg-gradient-to-br from-cyan-950 via-sky-950 to-emerald-950 text-slate-100 shadow-sm">
+          <div className="flex items-center justify-between border-b border-cyan-800 px-5 py-4">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">SMTP Simulator</p>
+              <h3 className="mt-1 text-sm font-bold text-white">Jeton de connexion envoyé</h3>
+            </div>
+            <Mail className="h-5 w-5 text-cyan-300" />
+          </div>
+          <div className="grid gap-4 px-5 py-4 lg:grid-cols-[1fr_auto]">
+            <div>
+              <p className="text-xs text-cyan-100/70">Destinataire</p>
+              <p className="font-mono text-sm font-semibold text-white">{simulatedEmail.to}</p>
+              <p className="mt-3 text-xs text-cyan-100/70">Objet</p>
+              <p className="text-sm font-semibold text-white">{simulatedEmail.subject}</p>
+              <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-cyan-800 bg-slate-950/50 p-3 text-[11px] leading-relaxed text-slate-300">{simulatedEmail.body}</pre>
+            </div>
+            {connectionToken && (
+              <div className="self-start rounded-lg border border-emerald-400/30 bg-emerald-400/10 p-3 lg:min-w-56">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">Jeton à transmettre</p>
+                <p className="mt-1 break-all font-mono text-sm font-black text-white">{connectionToken}</p>
+                <button type="button" onClick={copyConnectionToken} className="mt-3 inline-flex items-center gap-2 rounded-md bg-emerald-400 px-3 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-300">
+                  <Copy className="h-3.5 w-3.5" />
+                  {copiedToken ? 'Copié' : 'Copier le jeton'}
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
       <div className="bg-white shadow-sm rounded-2xl border border-gray-200 overflow-hidden">

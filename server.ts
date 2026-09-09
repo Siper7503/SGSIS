@@ -6,7 +6,7 @@ import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { getOrCreateUser } from "./src/db/users.ts";
 import { db } from "./src/db/index.ts";
 import { etablissements, effectifs, constructions, infrastructures, mobilier, communications, communicationReceipts, incidents, wash, tice, auditLogs, annualReports, users } from "./src/db/schema.ts";
-import { eq, and, ilike, ne, sql } from "drizzle-orm";
+import { asc, eq, and, ilike, ne, sql } from "drizzle-orm";
 import multer from "multer";
 import * as xlsx from "xlsx";
 import Papa from "papaparse";
@@ -1061,16 +1061,18 @@ async function startServer() {
         details: { email, role, rights, createdBy: req.user.email }
       });
 
-      // Simulate email notification
-      simulatedEmails.unshift({
+      // Simulate email notification and return it to the authenticated creator
+      // so the local SMTP simulator can display the generated access token.
+      const simulatedEmail = {
         id: "em_" + Math.random().toString(36).substring(2, 9),
         to: email,
         subject: "Création de votre compte SGSIED par l'Administrateur",
         body: `Bonjour ${prenom} ${nom},\n\nVotre compte d'accès sécurisé SGSIS en tant que "${role}" a été créé avec succès par l'administration habilitée.\n\nLe système vous a attribué automatiquement le droit de contrôle suivant :\n${rights}\n\nVos identifiants de connexion :\nEmail : ${email}\nMot de passe initial : ${password}\nJeton d'accès de secours : ${accessToken}\n\nVous pouvez utiliser ce code comme alternative à votre mot de passe pour vous connecter.\n\nCordialement,\nL'administration SGSIS - Commune de Ouagadougou.`,
         sentAt: new Date().toISOString()
-      });
+      };
+      simulatedEmails.unshift(simulatedEmail);
 
-      res.json({ success: true, user: publicUser(createdUser[0]) });
+      res.json({ success: true, user: publicUser(createdUser[0]), simulatedEmail });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1256,7 +1258,7 @@ async function startServer() {
   // M1: Etablissements
   app.get("/api/etablissements", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const results = await db.select().from(etablissements);
+      const results = await db.select().from(etablissements).orderBy(asc(etablissements.id));
       res.json(filterEstablishmentsForRequester(results, req.user));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1605,8 +1607,25 @@ async function startServer() {
       }
 
       // Analyse de la structure du fichier (colonnes attendues)
+      const normalizeImportLabel = (value: unknown) => String(value ?? '')
+        .replace(/^\uFEFF/, '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim()
+        .replace(/[’']/g, "'")
+        .replace(/\s+/g, ' ');
+
       const firstRow = parsedData[0];
-      const headers = Object.keys(firstRow);
+      const headers = Object.keys(firstRow).flatMap((header) => {
+        const normalized = normalizeImportLabel(header);
+        const aliases = [normalized];
+        if (normalized.startsWith('nom ')) aliases.push('nom');
+        if (normalized.startsWith('type ')) aliases.push('type');
+        if (normalized.startsWith('statut ')) aliases.push('statut');
+        if (normalized.startsWith('arrondissement ')) aliases.push('arrondissement');
+        return aliases;
+      });
 
       const hasNom = headers.some(h => ['nom', 'nom de l\'établissement', 'nom_etablissement', 'intitule', 'établissement'].includes(h.toLowerCase().trim()));
       const hasType = headers.some(h => ['type', 'type d\'établissement', 'type_etablissement', 'catégorie'].includes(h.toLowerCase().trim()));
@@ -1626,7 +1645,15 @@ async function startServer() {
       }
 
       const getVal = (row: any, synonyms: string[], defaultVal = '') => {
-        const key = Object.keys(row).find(k => synonyms.includes(k.toLowerCase().trim()));
+        const normalizedSynonyms = synonyms.map(normalizeImportLabel);
+        const key = Object.keys(row).find(k => {
+          const normalizedKey = normalizeImportLabel(k);
+          return normalizedSynonyms.includes(normalizedKey)
+            || (normalizedSynonyms.includes('nom') && normalizedKey.startsWith('nom '))
+            || (normalizedSynonyms.includes('type') && normalizedKey.startsWith('type '))
+            || (normalizedSynonyms.includes('statut') && normalizedKey.startsWith('statut '))
+            || (normalizedSynonyms.includes('arrondissement') && normalizedKey.startsWith('arrondissement '));
+        });
         return key ? String(row[key]).trim() : defaultVal;
       };
 
@@ -1684,10 +1711,11 @@ async function startServer() {
         }
 
         // Standardisation et validation du Type (Primaire ou Secondaire)
+        const normalizedTypeValue = normalizeImportLabel(item.type);
         let normalizedType = item.type;
-        if (normalizedType.toLowerCase().startsWith('prim')) {
+        if (normalizedTypeValue.startsWith('prim') || normalizedTypeValue.includes('ecole primaire')) {
           normalizedType = 'Primaire';
-        } else if (normalizedType.toLowerCase().startsWith('sec')) {
+        } else if (normalizedTypeValue.startsWith('sec') || normalizedTypeValue.includes('etablissement secondaire')) {
           normalizedType = 'Secondaire';
         } else {
           normalizedType = normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1).toLowerCase();
@@ -1702,7 +1730,10 @@ async function startServer() {
         }
 
         // Standardisation et validation du Statut
-        let normalizedStatut = item.statut.toLowerCase().trim();
+        const privateStatus = "priv\u00e9";
+        let normalizedStatut = normalizeImportLabel(item.statut);
+        if (normalizedStatut === 'publique') normalizedStatut = 'public';
+        if (normalizedStatut === 'prive' || normalizedStatut === 'privee') normalizedStatut = privateStatus;
         if (normalizedStatut === 'public' || normalizedStatut === 'prive' || normalizedStatut === 'privé' || normalizedStatut === 'en construction') {
           if (normalizedStatut === 'prive') normalizedStatut = 'privé';
         } else {

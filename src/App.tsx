@@ -5,6 +5,7 @@
 
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './components/AuthProvider.tsx';
+import { AppErrorBoundary } from './components/AppErrorBoundary.tsx';
 import { Layout } from './components/Layout.tsx';
 import Dashboard from './pages/Dashboard.tsx';
 import Etablissements from './pages/Etablissements.tsx';
@@ -26,7 +27,8 @@ import RapportsAnnuels from './pages/RapportsAnnuels.tsx';
 
 export default function App() {
   return (
-    <AuthProvider>
+    <AppErrorBoundary>
+      <AuthProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
@@ -50,6 +52,7 @@ export default function App() {
           </Route>
         </Routes>
       </BrowserRouter>
-    </AuthProvider>
+      </AuthProvider>
+    </AppErrorBoundary>
   );
 }

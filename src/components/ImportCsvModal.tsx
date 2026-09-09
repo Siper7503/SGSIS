@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useAuth } from './AuthProvider.tsx';
 import { Upload, X, AlertCircle, CheckCircle2, AlertTriangle, Download, FileSpreadsheet, RefreshCw, Cloud } from 'lucide-react';
 
@@ -22,6 +22,7 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
   const [error, setError] = useState<string | null>(null);
   const [isDragActive, setIsDragActive] = useState(false);
   const [driveLoading, setDriveLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { token } = useAuth();
 
   const driveClientId = import.meta.env.VITE_GOOGLE_DRIVE_CLIENT_ID as string | undefined;
@@ -239,17 +240,21 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      <div className="flex min-h-screen items-center justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
-        <div className="fixed inset-0 transition-opacity bg-slate-900 bg-opacity-60" aria-hidden="true" onClick={onClose}></div>
-
-        <span className="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">&#8203;</span>
-
-        <div className="inline-block transform overflow-hidden rounded-xl bg-white text-left align-bottom shadow-2xl transition-all sm:my-8 sm:w-full sm:max-w-2xl sm:align-middle border border-slate-100">
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="import-modal-title"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="flex min-h-full items-center justify-center">
+        <div className="relative max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-100 bg-white text-left shadow-2xl">
           
           {/* Header */}
           <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center justify-between">
-            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <h3 id="import-modal-title" className="text-lg font-bold text-slate-800 flex items-center gap-2">
               <FileSpreadsheet className="h-5 w-5 text-blue-600" />
               Importation en masse d'établissements
             </h3>
@@ -292,8 +297,8 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
             {/* Step 1: Upload local or Google Drive */}
             {!report && (
               <div className="space-y-3">
-              <div 
-                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+                <div
+                  className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
                   isDragActive 
                     ? 'border-blue-500 bg-blue-50/50' 
                     : file 
@@ -304,10 +309,11 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
                 onDragOver={handleDrag}
                 onDragLeave={handleDrag}
                 onDrop={handleDrop}
-                onClick={() => document.getElementById('file-upload')?.click()}
-              >
-                <input
-                  id="file-upload"
+                 onClick={() => fileInputRef.current?.click()}
+               >
+                 <input
+                   ref={fileInputRef}
+                   id="file-upload"
                   type="file"
                   accept=".csv,.xlsx,.xls,.pdf"
                   onChange={handleFileChange}
@@ -340,8 +346,8 @@ export function ImportCsvModal({ isOpen, onClose, onSuccess }: ImportCsvModalPro
                       <Upload className="h-6 w-6" />
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-slate-800">Faites glisser votre fichier ici, ou parcourez</p>
-                      <p className="text-xs text-slate-400 mt-1">Accepte CSV, Excel et PDF</p>
+                      <p className="text-sm font-semibold text-slate-800">Sélectionnez un fichier sur votre ordinateur</p>
+                      <p className="text-xs text-slate-400 mt-1">CSV, Excel ou PDF · clic pour parcourir vos dossiers</p>
                     </div>
                   </div>
                 )}
