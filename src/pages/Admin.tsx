@@ -54,6 +54,7 @@ export default function Admin() {
   const isDseAdmin = hasAnyRole(user?.role, DSE_ROLES);
   const isProviseur = hasAnyRole(user?.role, [ROLES.PROVISEUR]);
   const canCreateUsers = isSuperAdmin || isDseAdmin || isProviseur;
+  const canManageSecurity = isSuperAdmin;
 
   const rolesList = isSuperAdmin
     ? [...ADMIN_MANAGED_ROLES]
@@ -564,7 +565,7 @@ export default function Admin() {
                   {/* Actions (Lock/Unlock) for authorized administrators */}
                   <div className="flex items-center gap-2">
                     {user?.email !== u.email && !hasAnyRole(u.role, SUPER_ADMIN_ROLES) && (
-                      canCreateUsers ? (
+                      canManageSecurity ? (
                         u.isLocked ? (
                           <button
                             onClick={() => handleUnlockUser(u.id)}
@@ -585,7 +586,7 @@ export default function Admin() {
                           </button>
                         )
                       ) : (
-                        <div className="text-xs text-slate-400 italic">Modification interdite</div>
+                        <div className="text-xs text-slate-400 italic">Blocage reserve au SuperAdmin</div>
                       )
                     )}
                     {user?.email !== u.email && canCreateUsers && !hasAnyRole(u.role, SUPER_ADMIN_ROLES) && (
@@ -597,14 +598,16 @@ export default function Admin() {
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
-                        <button
-                          onClick={() => handleDeleteUser(u.id)}
-                          disabled={actionLoading === u.id}
-                          className="inline-flex items-center px-2.5 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-xs font-bold text-rose-700 transition-colors disabled:opacity-50"
-                          title="Supprimer le compte"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        {canManageSecurity && (
+                          <button
+                            onClick={() => handleDeleteUser(u.id)}
+                            disabled={actionLoading === u.id}
+                            className="inline-flex items-center px-2.5 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-xs font-bold text-rose-700 transition-colors disabled:opacity-50"
+                            title="Supprimer le compte"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </>
                     )}
                     <span className="inline-flex items-center rounded-lg bg-gray-50 border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-500">

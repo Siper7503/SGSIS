@@ -958,8 +958,8 @@ async function startServer() {
 
   // Admin lock/unlock users according to the administration hierarchy.
   app.post("/api/users/unlock/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !canCreateUsers(req.user.role)) {
-      res.status(403).json({ error: "Acces refuse : vous ne pouvez pas deverrouiller ou autoriser ce compte." });
+    if (!req.user || !hasAnyRole(req.user.role, SUPER_ADMIN_ROLES)) {
+      res.status(403).json({ error: "Acces refuse : seul le SuperAdmin peut deverrouiller ou autoriser un compte." });
       return;
     }
     try {
@@ -1001,8 +1001,8 @@ async function startServer() {
   });
 
   app.post("/api/users/lock/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !canCreateUsers(req.user.role)) {
-      res.status(403).json({ error: "Acces refuse : vous ne pouvez pas bloquer ce compte." });
+    if (!req.user || !hasAnyRole(req.user.role, SUPER_ADMIN_ROLES)) {
+      res.status(403).json({ error: "Acces refuse : seul le SuperAdmin peut bloquer un compte." });
       return;
     }
     try {
@@ -1177,8 +1177,8 @@ async function startServer() {
 
   // DELETE a user (reject access or delete completely)
   app.delete("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !canCreateUsers(req.user.role)) {
-      res.status(403).json({ error: "Acces refuse : vous ne pouvez pas supprimer ce compte." });
+    if (!req.user || !hasAnyRole(req.user.role, SUPER_ADMIN_ROLES)) {
+      res.status(403).json({ error: "Acces refuse : seul le SuperAdmin peut supprimer un compte." });
       return;
     }
     try {
