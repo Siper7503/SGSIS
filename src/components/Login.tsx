@@ -199,7 +199,7 @@ export function Login() {
         if (data.requires2FA) {
           addSimulatedEmail(data.simulatedEmail);
           setStep('2fa');
-          setSuccessMessage("Double facteur (2FA) requis. Un code OTP à 6 chiffres a été simulé dans la console de votre serveur Express.");
+          setSuccessMessage("Double facteur (2FA) requis. Un code OTP à 6 caractères a été envoyé dans le simulateur SMTP.");
         } else {
           setSecureSession(data.token, data.user);
         }
@@ -244,10 +244,14 @@ export function Login() {
     }
   };
 
-  const handleCopyToken = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedToken(id);
-    setTimeout(() => setCopiedToken(null), 2000);
+  const handleCopyToken = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedToken(id);
+      window.setTimeout(() => setCopiedToken(null), 2000);
+    } catch {
+      setError("Impossible de copier le code. Sélectionnez-le puis copiez-le manuellement.");
+    }
   };
 
   const addSimulatedEmail = (message: any) => {
@@ -359,13 +363,13 @@ export function Login() {
             )}
 
             {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4">
               
               {/* 2FA Verification Form */}
               {step === '2fa' ? (
                 <div className="space-y-4">
                   <div>
-                    <label htmlFor="otp-code" className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Code OTP SMS (Simulé)</label>
+                    <label htmlFor="otp-code" className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Code OTP SMS (6 caractères)</label>
                     <div className="relative">
                       <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                         <KeyRound className="h-5 w-5 text-slate-400" />
@@ -374,11 +378,16 @@ export function Login() {
                         id="otp-code"
                         type="text"
                         required
-                        maxLength={12}
+                        maxLength={6}
                         value={otpCode}
-                        onChange={(e) => setOtpCode(e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
+                        onChange={(e) => setOtpCode(e.target.value)}
+                        autoComplete="one-time-code"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        inputMode="text"
                         className="block w-full rounded-lg border border-cyan-100 py-3 pl-10 pr-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm font-semibold tracking-widest text-center"
-                        placeholder="Ex: mqdH7p"
+                        placeholder="Ex: bH3y_S"
                       />
                     </div>
                   </div>
@@ -403,8 +412,10 @@ export function Login() {
                       </div>
                       <input
                         id="email"
+                        name="login-email"
                         type="email"
                         required
+                        autoComplete="off"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         className={`block w-full rounded-lg border py-3 pl-10 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm ${
@@ -480,8 +491,9 @@ export function Login() {
                             </div>
                             <input
                               id="password"
+                              name="login-password"
                               type={showPassword ? "text" : "password"}
-                              autoComplete="current-password"
+                              autoComplete="off"
                               required
                               value={password}
                               onChange={(e) => setPassword(e.target.value)}
@@ -512,8 +524,10 @@ export function Login() {
                             </div>
                             <input
                               id="accessToken"
+                              name="login-access-token"
                               type="text"
                               required
+                              autoComplete="off"
                               value={accessToken}
                               onChange={(e) => setAccessToken(e.target.value)}
                               className="block w-full rounded-lg border border-amber-200 bg-amber-50/5 py-3 pl-10 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm font-mono font-bold"
@@ -625,6 +639,7 @@ export function Login() {
                           </div>
                           <input
                             id="password"
+                            name="registration-password"
                             type={showRegPassword ? "text" : "password"}
                             autoComplete="new-password"
                             required
@@ -805,7 +820,7 @@ export function Login() {
                 simulatedEmails.map((item) => {
                   // Attempt to extract token or OTP code from body if present
                   const tokenMatch = item.body.match(/SGSIED-[A-Za-z0-9_-]+/);
-                  const otpMatch = item.body.match(/Code OTP SMS\s*:\s*(\d{6})/);
+                  const otpMatch = item.body.match(/Code OTP SMS\s*:\s*([A-Za-z0-9_-]{6})/);
                   const parsedToken = tokenMatch ? tokenMatch[0] : (otpMatch ? otpMatch[1] : null);
                   const isOtp = !!otpMatch;
 
@@ -866,17 +881,14 @@ export function Login() {
                                     : 'bg-blue-500 hover:bg-blue-600 text-white'
                                 }`}
                               >
-                                {copiedToken === item.id ? (
-                                  <>
-                                    <Check className="h-3.5 w-3.5 mr-1" />
-                                    Copié !
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="h-3.5 w-3.5 mr-1" />
-                                    Copier
-                                  </>
-                                )}
+                                <span className={copiedToken === item.id ? 'inline-flex items-center' : 'hidden'}>
+                                  <Check className="h-3.5 w-3.5 mr-1" />
+                                </span>
+                                <span className={copiedToken === item.id ? 'hidden' : 'inline-flex items-center'}>
+                                  <Copy className="h-3.5 w-3.5 mr-1" />
+                                </span>
+                                <span className={copiedToken === item.id ? 'inline' : 'hidden'}>Copié !</span>
+                                <span className={copiedToken === item.id ? 'hidden' : 'inline'}>Copier</span>
                               </button>
                             </div>
                           )}

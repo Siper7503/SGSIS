@@ -26,6 +26,38 @@ const emptyReport = (type: string) => type === 'Primaire' ? {
   bep: { candidatsFilles: 0, candidatsGarcons: 0, admisFilles: 0, admisGarcons: 0 }
 };
 
+function normalizeReportData(type: string, source: any) {
+  const base: any = emptyReport(type);
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return base;
+
+  if (type === 'Primaire') {
+    return {
+      ...base,
+      ...source,
+      cepAvecLibres: { ...base.cepAvecLibres, ...(source.cepAvecLibres || {}) },
+      cepSansLibres: { ...base.cepSansLibres, ...(source.cepSansLibres || {}) },
+    };
+  }
+
+  const normalizeCycle = (cycle: string[], value: any) => Object.fromEntries(
+    cycle.map((level) => [level, {
+      filles: numberValue(value?.[level]?.filles),
+      garcons: numberValue(value?.[level]?.garcons),
+    }])
+  );
+
+  return {
+    ...base,
+    ...source,
+    classes: { ...base.classes, ...(source.classes || {}) },
+    premierCycle: normalizeCycle(CYCLE_LEVELS, source.premierCycle),
+    secondCycle: normalizeCycle(SECOND_CYCLE_LEVELS, source.secondCycle),
+    enseignants: { ...base.enseignants, ...(source.enseignants || {}) },
+    examens: { ...base.examens, ...(source.examens || {}) },
+    bep: { ...base.bep, ...(source.bep || {}) },
+  };
+}
+
 function numberValue(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
@@ -43,7 +75,10 @@ function flatten(value: any, prefix = '', output: Record<string, unknown> = {}) 
 function setPath(source: any, path: string[], value: number) {
   const next = structuredClone(source);
   let cursor = next;
-  path.slice(0, -1).forEach((part) => { cursor = cursor[part]; });
+  path.slice(0, -1).forEach((part) => {
+    if (!cursor[part] || typeof cursor[part] !== 'object') cursor[part] = {};
+    cursor = cursor[part];
+  });
   cursor[path[path.length - 1]] = value;
   return next;
 }
@@ -76,6 +111,9 @@ export default function RapportsAnnuels() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const selectedEtablissement = etablissements.find((item) => String(item.id) === selectedId);
+  // Normalize before rendering so a type change cannot expose a partial report
+  // during the render between selectedId and the synchronization effect.
+  const formDonnees = normalizeReportData(selectedEtablissement?.type || 'Primaire', donnees);
 
   const load = async () => {
     if (!token) return;
@@ -86,11 +124,12 @@ export default function RapportsAnnuels() {
         apiFetch('/api/etablissements', { headers }),
         apiFetch('/api/annual-reports', { headers })
       ]);
+      if (!etabRes.ok || !reportRes.ok) throw new Error('Impossible de charger les rapports annuels.');
       const etabs = await etabRes.json();
       const annual = await reportRes.json();
       const visibleEtabs = Array.isArray(etabs) ? etabs.filter((item: any) => !user?.etablissementId || isDse || isSuperAdmin || item.id === user.etablissementId) : [];
       setEtablissements(visibleEtabs);
-      setReports(Array.isArray(annual) ? annual : []);
+      setReports(Array.isArray(annual) ? annual.filter((row: any) => row?.report) : []);
       if (!selectedId && visibleEtabs.length > 0) {
         setSelectedId(String(user?.etablissementId || visibleEtabs[0].id));
       }
@@ -105,9 +144,9 @@ export default function RapportsAnnuels() {
   useEffect(() => { load(); }, [token]);
 
   useEffect(() => {
-    const existing = reports.find((row) => row.report.etablissementId === Number(selectedId) && row.report.anneeScolaire === anneeScolaire);
+    const existing = reports.find((row) => row.report?.etablissementId === Number(selectedId) && row.report?.anneeScolaire === anneeScolaire);
     const type = selectedEtablissement?.type || 'Primaire';
-    setDonnees(existing?.report?.donnees || emptyReport(type));
+    setDonnees(normalizeReportData(type, existing?.report?.donnees));
   }, [selectedId, anneeScolaire, selectedEtablissement?.type, reports]);
 
   const setValue = (path: string[], value: number) => setDonnees((current: any) => setPath(current, path, value));
@@ -120,7 +159,7 @@ export default function RapportsAnnuels() {
       const response = await apiFetch('/api/annual-reports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ etablissementId: Number(selectedId), anneeScolaire, donnees, action })
+        body: JSON.stringify({ etablissementId: Number(selectedId), anneeScolaire, donnees: formDonnees, action })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Erreur lors de la sauvegarde.');
@@ -171,7 +210,7 @@ export default function RapportsAnnuels() {
 
   const chartData = useMemo(() => ['Brouillon', 'Soumis au proviseur', 'Soumis au DSE', 'Valide', 'Rejete'].map((status) => ({
     status,
-    total: reports.filter((row) => row.report.statut === status).length
+    total: reports.filter((row) => row.report?.statut === status).length
   })), [reports]);
 
   if (!canSeeReports) return <div className="p-8 text-center text-slate-500">Acces reserve aux responsables scolaires et a la DSE.</div>;
@@ -212,16 +251,16 @@ export default function RapportsAnnuels() {
         {selectedEtablissement?.type === 'Primaire' ? (
           <div className="mt-6 space-y-5">
             <h3 className="font-bold text-slate-900">Ecole primaire : donnees de rentree et CEP</h3>
-            <div className="grid gap-4 md:grid-cols-4"><NumericField label="Classes" value={donnees.classes} onChange={(value) => setValue(['classes'], value)} /><NumericField label="Enseignants en classe" value={donnees.enseignantsEnClasse} onChange={(value) => setValue(['enseignantsEnClasse'], value)} /><NumericField label="Eleves filles" value={donnees.filles} onChange={(value) => setValue(['filles'], value)} /><NumericField label="Eleves garcons" value={donnees.garcons} onChange={(value) => setValue(['garcons'], value)} /></div>
-            {(['cepAvecLibres', 'cepSansLibres'] as const).map((key) => <div key={key} className="rounded-lg bg-slate-50 p-4"><h4 className="mb-3 text-sm font-bold text-slate-800">CEP {key === 'cepAvecLibres' ? 'avec candidats libres' : 'sans candidats libres'}</h4><div className="grid gap-4 md:grid-cols-4"><NumericField label="Presents filles" value={donnees[key].presentsFilles} onChange={(value) => setValue([key, 'presentsFilles'], value)} /><NumericField label="Presents garcons" value={donnees[key].presentsGarcons} onChange={(value) => setValue([key, 'presentsGarcons'], value)} /><NumericField label="Admis filles" value={donnees[key].admisFilles} onChange={(value) => setValue([key, 'admisFilles'], value)} /><NumericField label="Admis garcons" value={donnees[key].admisGarcons} onChange={(value) => setValue([key, 'admisGarcons'], value)} /></div></div>)}
+            <div className="grid gap-4 md:grid-cols-4"><NumericField label="Classes" value={formDonnees.classes} onChange={(value) => setValue(['classes'], value)} /><NumericField label="Enseignants en classe" value={formDonnees.enseignantsEnClasse} onChange={(value) => setValue(['enseignantsEnClasse'], value)} /><NumericField label="Eleves filles" value={formDonnees.filles} onChange={(value) => setValue(['filles'], value)} /><NumericField label="Eleves garcons" value={formDonnees.garcons} onChange={(value) => setValue(['garcons'], value)} /></div>
+            {(['cepAvecLibres', 'cepSansLibres'] as const).map((key) => <div key={key} className="rounded-lg bg-slate-50 p-4"><h4 className="mb-3 text-sm font-bold text-slate-800">CEP {key === 'cepAvecLibres' ? 'avec candidats libres' : 'sans candidats libres'}</h4><div className="grid gap-4 md:grid-cols-4"><NumericField label="Presents filles" value={formDonnees[key].presentsFilles} onChange={(value) => setValue([key, 'presentsFilles'], value)} /><NumericField label="Presents garcons" value={formDonnees[key].presentsGarcons} onChange={(value) => setValue([key, 'presentsGarcons'], value)} /><NumericField label="Admis filles" value={formDonnees[key].admisFilles} onChange={(value) => setValue([key, 'admisFilles'], value)} /><NumericField label="Admis garcons" value={formDonnees[key].admisGarcons} onChange={(value) => setValue([key, 'admisGarcons'], value)} /></div></div>)}
           </div>
         ) : selectedEtablissement ? (
           <div className="mt-6 space-y-5">
             <h3 className="font-bold text-slate-900">Etablissement secondaire : classes, effectifs, personnel et examens</h3>
-            <div><h4 className="mb-3 text-sm font-bold text-slate-700">Classes ouvertes par niveau</h4><div className="grid gap-4 sm:grid-cols-2 md:grid-cols-5">{CLASS_LEVELS.map((level) => <NumericField key={level} label={level} value={donnees.classes[level]} onChange={(value) => setValue(['classes', level], value)} />)}</div></div>
-            <div><h4 className="mb-3 text-sm font-bold text-slate-700">Effectifs du premier et du second cycle</h4><div className="grid gap-4 md:grid-cols-2">{[...CYCLE_LEVELS.map((level) => ['premierCycle', level] as string[]), ...SECOND_CYCLE_LEVELS.map((level) => ['secondCycle', level] as string[])].map(([cycle, level]) => <div key={`${cycle}-${level}`} className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3"><span className="col-span-2 text-xs font-bold text-slate-700">{level}</span><NumericField label="Filles" value={donnees[cycle][level].filles} onChange={(value) => setValue([cycle, level, 'filles'], value)} /><NumericField label="Garcons" value={donnees[cycle][level].garcons} onChange={(value) => setValue([cycle, level, 'garcons'], value)} /></div>)}</div></div>
-            <div className="grid gap-4 md:grid-cols-2"><NumericField label="Enseignants hommes" value={donnees.enseignants.hommes} onChange={(value) => setValue(['enseignants', 'hommes'], value)} /><NumericField label="Enseignantes femmes" value={donnees.enseignants.femmes} onChange={(value) => setValue(['enseignants', 'femmes'], value)} /></div>
-            {(['examens', 'bep'] as const).map((key) => <div key={key} className="rounded-lg bg-slate-50 p-4"><h4 className="mb-3 text-sm font-bold text-slate-800">Resultats {key === 'bep' ? 'BEP' : 'examens de fin d\'annee'}</h4><div className="grid gap-4 md:grid-cols-4"><NumericField label="Candidats filles" value={donnees[key].candidatsFilles} onChange={(value) => setValue([key, 'candidatsFilles'], value)} /><NumericField label="Candidats garcons" value={donnees[key].candidatsGarcons} onChange={(value) => setValue([key, 'candidatsGarcons'], value)} /><NumericField label="Admis filles" value={donnees[key].admisFilles} onChange={(value) => setValue([key, 'admisFilles'], value)} /><NumericField label="Admis garcons" value={donnees[key].admisGarcons} onChange={(value) => setValue([key, 'admisGarcons'], value)} /></div></div>)}
+            <div><h4 className="mb-3 text-sm font-bold text-slate-700">Classes ouvertes par niveau</h4><div className="grid gap-4 sm:grid-cols-2 md:grid-cols-5">{CLASS_LEVELS.map((level) => <NumericField key={level} label={level} value={formDonnees.classes[level]} onChange={(value) => setValue(['classes', level], value)} />)}</div></div>
+            <div><h4 className="mb-3 text-sm font-bold text-slate-700">Effectifs du premier et du second cycle</h4><div className="grid gap-4 md:grid-cols-2">{[...CYCLE_LEVELS.map((level) => ['premierCycle', level] as string[]), ...SECOND_CYCLE_LEVELS.map((level) => ['secondCycle', level] as string[])].map(([cycle, level]) => <div key={`${cycle}-${level}`} className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3"><span className="col-span-2 text-xs font-bold text-slate-700">{level}</span><NumericField label="Filles" value={formDonnees[cycle][level].filles} onChange={(value) => setValue([cycle, level, 'filles'], value)} /><NumericField label="Garcons" value={formDonnees[cycle][level].garcons} onChange={(value) => setValue([cycle, level, 'garcons'], value)} /></div>)}</div></div>
+            <div className="grid gap-4 md:grid-cols-2"><NumericField label="Enseignants hommes" value={formDonnees.enseignants.hommes} onChange={(value) => setValue(['enseignants', 'hommes'], value)} /><NumericField label="Enseignantes femmes" value={formDonnees.enseignants.femmes} onChange={(value) => setValue(['enseignants', 'femmes'], value)} /></div>
+            {(['examens', 'bep'] as const).map((key) => <div key={key} className="rounded-lg bg-slate-50 p-4"><h4 className="mb-3 text-sm font-bold text-slate-800">Resultats {key === 'bep' ? 'BEP' : 'examens de fin d\'annee'}</h4><div className="grid gap-4 md:grid-cols-4"><NumericField label="Candidats filles" value={formDonnees[key].candidatsFilles} onChange={(value) => setValue([key, 'candidatsFilles'], value)} /><NumericField label="Candidats garcons" value={formDonnees[key].candidatsGarcons} onChange={(value) => setValue([key, 'candidatsGarcons'], value)} /><NumericField label="Admis filles" value={formDonnees[key].admisFilles} onChange={(value) => setValue([key, 'admisFilles'], value)} /><NumericField label="Admis garcons" value={formDonnees[key].admisGarcons} onChange={(value) => setValue([key, 'admisGarcons'], value)} /></div></div>)}
           </div>
         ) : <p className="mt-6 text-sm text-slate-500">Aucun etablissement rattache a ce compte.</p>}
       </fieldset>

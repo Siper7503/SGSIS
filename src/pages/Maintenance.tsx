@@ -10,6 +10,8 @@ export default function Maintenance() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const { token, user } = useAuth();
   const canResolve = hasAnyRole(user?.role, DSE_ROLES);
 
@@ -36,8 +38,11 @@ export default function Maintenance() {
   }, [token]);
 
   const updateStatus = async (id: number, statut: string) => {
+    if (!token || actionLoading !== null) return;
+    setActionLoading(id);
+    setActionError(null);
     try {
-      await apiFetch(`/api/incidents/${id}`, {
+      const res = await apiFetch(`/api/incidents/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -45,9 +50,15 @@ export default function Maintenance() {
         },
         body: JSON.stringify({ statut, dateResolution: statut === 'Résolu' ? new Date().toISOString() : null })
       });
-      fetchData();
-    } catch (e) {
-      console.error(e);
+      if (!res.ok) {
+        const result = await res.json().catch(() => ({}));
+        throw new Error(result.error || 'Impossible de mettre à jour le statut de l incident.');
+      }
+      await fetchData();
+    } catch (e: any) {
+      setActionError(e.message || 'Une erreur est survenue pendant la mise à jour.');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -87,6 +98,12 @@ export default function Maintenance() {
           </button>
         </div>
       </div>
+
+      {actionError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+          {actionError}
+        </div>
+      )}
 
       <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
         <div className="relative rounded-md shadow-sm">
@@ -138,12 +155,12 @@ export default function Maintenance() {
               </div>
               <div className="bg-gray-50 px-4 py-3 sm:px-6 flex justify-end space-x-2">
                 {canResolve && item.statut === 'Signalé' && (
-                  <button onClick={() => updateStatus(item.id, 'En cours')} className="text-yellow-600 hover:text-yellow-900 text-xs font-medium">
+                  <button disabled={actionLoading !== null} onClick={() => updateStatus(item.id, 'En cours')} className="text-yellow-600 hover:text-yellow-900 text-xs font-medium disabled:opacity-50">
                     Passer en cours
                   </button>
                 )}
                 {canResolve && item.statut !== 'Résolu' && (
-                  <button onClick={() => updateStatus(item.id, 'Résolu')} className="text-green-600 hover:text-green-900 text-xs font-medium">
+                  <button disabled={actionLoading !== null} onClick={() => updateStatus(item.id, 'Résolu')} className="text-green-600 hover:text-green-900 text-xs font-medium disabled:opacity-50">
                     Marquer résolu
                   </button>
                 )}

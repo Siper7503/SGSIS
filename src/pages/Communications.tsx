@@ -121,10 +121,14 @@ export default function Communications() {
   const handleReadInbox = async (id: number) => {
     if (!token) return;
     try {
-      await apiFetch(`/api/communications/${id}/read`, {
+      const res = await apiFetch(`/api/communications/${id}/read`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
+      if (!res.ok) {
+        const result = await res.json().catch(() => ({}));
+        throw new Error(result.error || 'Impossible de marquer cette communication comme lue.');
+      }
       // Refresh local inbox state without full reload to keep expand state
       setInbox(prev => prev.map(item => item.id === id && item.statut === 'Non lu' ? { ...item, statut: 'Lu' } : item));
     } catch (e) {
@@ -153,6 +157,10 @@ export default function Communications() {
         setActionSuccess("Votre accusé de réception a été enregistré avec succès.");
         setTimeout(() => setActionSuccess(null), 5000);
         fetchData();
+      } else {
+        const result = await res.json().catch(() => ({}));
+        setActionSuccess(result.error || 'Impossible d enregistrer l accusé de réception.');
+        setTimeout(() => setActionSuccess(null), 5000);
       }
     } catch (e) {
       console.error(e);

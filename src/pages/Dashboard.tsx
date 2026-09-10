@@ -40,7 +40,8 @@ import {
   ShieldAlert,
   Phone,
   MapPin,
-  X
+  X,
+  EyeOff
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -188,6 +189,7 @@ export default function Dashboard() {
   const [newRole, setNewRole] = useState<string>(ROLES.DIRECTEUR_DSE);
   const [newArrondissement, setNewArrondissement] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -649,6 +651,7 @@ export default function Dashboard() {
       setNewPrenom('');
       setNewTelephone('');
       setNewPassword('');
+      setShowNewPassword(false);
       setNewRole(ROLES.DIRECTEUR_DSE);
       setNewArrondissement('');
       setShowAddForm(false);
@@ -1135,14 +1138,26 @@ export default function Dashboard() {
 
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Mot de Passe Initial</label>
-                      <input
-                        type="password"
-                        required
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        className="block w-full rounded-xl border border-gray-200 py-2.5 px-3 text-slate-950 sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 bg-white"
-                        placeholder="Ex: Securite@2026"
-                      />
+                      <div className="relative">
+                        <input
+                          type={showNewPassword ? 'text' : 'password'}
+                          required
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          autoComplete="new-password"
+                          className="block w-full rounded-xl border border-gray-200 py-2.5 pl-3 pr-11 text-slate-950 sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 bg-white"
+                          placeholder="Ex: Securite@2026"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewPassword((visible) => !visible)}
+                          className="absolute inset-y-0 right-0 inline-flex w-10 items-center justify-center text-slate-400 hover:text-indigo-600"
+                          aria-label={showNewPassword ? 'Masquer le mot de passe initial' : 'Afficher le mot de passe initial'}
+                          title={showNewPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                        >
+                          {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
                       <p className="mt-1 text-[10px] text-slate-400">
                         Doit respecter la politique : 8 caractères minimum, une majuscule au début, lettre, chiffre, caractère spécial.
                       </p>

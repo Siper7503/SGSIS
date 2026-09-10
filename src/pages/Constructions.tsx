@@ -67,7 +67,7 @@ export default function Constructions() {
           }}
           onSuccess={async () => {
             try {
-              await apiFetch(`/api/constructions/${convertingItem.id}`, {
+              const response = await apiFetch(`/api/constructions/${convertingItem.id}`, {
                 method: 'PUT',
                 headers: {
                   'Content-Type': 'application/json',
@@ -78,8 +78,13 @@ export default function Constructions() {
                   statut: 'Livré (Converti)'
                 })
               });
+              if (!response.ok) {
+                const result = await response.json().catch(() => ({}));
+                throw new Error(result.error || 'La conversion du projet n a pas pu être finalisée.');
+              }
             } catch (e) {
-              console.error("Failed to update construction status", e);
+              window.alert(e instanceof Error ? e.message : 'La conversion du projet n a pas pu être finalisée.');
+              return;
             }
             setConvertingItem(null);
             fetchData();

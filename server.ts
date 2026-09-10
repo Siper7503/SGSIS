@@ -633,7 +633,7 @@ async function startServer() {
           id: "em_" + Math.random().toString(36).substring(2, 9),
           to: user.email,
           subject: "🔑 [SMS OTP] Votre code de sécurité double facteur (2FA)",
-          body: `Bonjour ${user.prenom || ''} ${user.nom || ''},\n\nUn code de sécurité à 6 chiffres a été généré pour valider votre connexion en double facteur (2FA) sur SGSIED.\n\n📱 Code OTP SMS : ${otpCode}\n\nCe code est valable pendant 5 minutes. Ne le partagez jamais.\n\nCordialement,\nL'administration SGSIED Burkina Faso.`,
+          body: `Bonjour ${user.prenom || ''} ${user.nom || ''},\n\nUn code de sécurité à 6 caractères alphanumériques a été généré pour valider votre connexion en double facteur (2FA) sur SGSIED.\n\n📱 Code OTP SMS : ${otpCode}\n\nCe code est valable pendant 5 minutes. Ne le partagez jamais.\n\nCordialement,\nL'administration SGSIED Burkina Faso.`,
           sentAt: new Date().toISOString()
         };
         simulatedEmails.unshift(simulatedEmail);

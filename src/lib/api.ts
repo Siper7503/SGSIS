@@ -1,5 +1,15 @@
 import { queueAction } from './sync.ts';
 
+function queuedResponse() {
+  return new Response(JSON.stringify({
+    error: 'Action mise en attente : la connexion au serveur est indisponible. Elle sera retentee automatiquement.',
+    queued: true,
+  }), {
+    status: 503,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 export async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const isRead = !options.method || options.method === 'GET' || options.method === 'HEAD';
   
@@ -11,10 +21,7 @@ export async function apiFetch(url: string, options: RequestInit = {}): Promise<
       body: options.body
     });
     
-    return {
-      ok: true,
-      json: async () => ({ status: 'queued', offline: true })
-    } as Response;
+    return queuedResponse();
   }
   
   if (!navigator.onLine && isRead) {
@@ -47,10 +54,7 @@ export async function apiFetch(url: string, options: RequestInit = {}): Promise<
         headers: options.headers,
         body: options.body
       });
-      return {
-        ok: true,
-        json: async () => ({ status: 'queued', offline: true })
-      } as Response;
+      return queuedResponse();
     }
     throw error;
   }

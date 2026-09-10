@@ -18,7 +18,9 @@ import {
   ShieldAlert, 
   Phone,
   Pencil,
-  Trash2
+  Trash2,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { ADMIN_MANAGED_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SCHOOL_USER_ROLES, SUPER_ADMIN_ROLES, hasAnyRole, ROLES } from '../lib/roles.ts';
 
@@ -37,6 +39,7 @@ export default function Admin() {
   const [newRole, setNewRole] = useState<string>(ROLES.DIRECTEUR_ECOLE);
   const [newArrondissement, setNewArrondissement] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -45,6 +48,7 @@ export default function Admin() {
   const [etablissements, setEtablissements] = useState<any[]>([]);
   const [simulatedEmail, setSimulatedEmail] = useState<any | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<any | null>(null);
 
   const isSuperAdmin = hasAnyRole(user?.role, SUPER_ADMIN_ROLES);
   const isDseAdmin = hasAnyRole(user?.role, DSE_ROLES);
@@ -141,6 +145,7 @@ export default function Admin() {
     setNewArrondissement(account.arrondissement || '');
     setNewEtablissementId(account.etablissementId ? String(account.etablissementId) : '');
     setNewPassword('');
+    setShowNewPassword(false);
     setFormError(null);
     setFormSuccess(null);
     setShowAddForm(true);
@@ -210,6 +215,7 @@ export default function Admin() {
       setNewPrenom('');
       setNewTelephone('');
       setNewPassword('');
+      setShowNewPassword(false);
       setNewRole(rolesList[0] || ROLES.DIRECTEUR_ECOLE);
       setNewArrondissement('');
       setNewEtablissementId('');
@@ -226,6 +232,9 @@ export default function Admin() {
   };
 
   const connectionToken = simulatedEmail?.body?.match(/SGSIED-[A-Za-z0-9_-]+/)?.[0] || null;
+  const selectedUserEtablissement = selectedUser?.etablissementId
+    ? etablissements.find((item) => Number(item.id) === Number(selectedUser.etablissementId))
+    : null;
 
   const copyConnectionToken = async () => {
     if (!connectionToken) return;
@@ -353,14 +362,26 @@ export default function Admin() {
 
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Mot de Passe Initial</label>
-                <input
-                  type="password"
-                  required={!editingUserId}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="block w-full rounded-xl border border-slate-200 py-2.5 px-3 text-slate-950 sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
-                  placeholder="Ex: Mopass@2026"
-                />
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    required={!editingUserId}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    autoComplete="new-password"
+                    className="block w-full rounded-xl border border-slate-200 py-2.5 pl-3 pr-11 text-slate-950 sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    placeholder="Ex: Mopass@2026"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((visible) => !visible)}
+                    className="absolute inset-y-0 right-0 inline-flex w-10 items-center justify-center text-slate-400 hover:text-blue-600"
+                    aria-label={showNewPassword ? 'Masquer le mot de passe initial' : 'Afficher le mot de passe initial'}
+                    title={showNewPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  >
+                    {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
                 <p className="mt-1 text-[10px] text-slate-400 leading-normal">
                   Minimum 8 caractères avec au moins une lettre, un chiffre, un caractère spécial, et majuscule uniquement au début.
                 </p>
@@ -486,7 +507,11 @@ export default function Admin() {
             {data.map((u) => (
               <li key={u.id} className="p-6 hover:bg-slate-50 transition-colors">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div className="flex items-start">
+                  <div
+                    className={`flex items-start ${isSuperAdmin ? 'cursor-pointer rounded-xl -m-2 p-2 hover:bg-blue-50/60' : ''}`}
+                    onClick={() => isSuperAdmin && setSelectedUser(u)}
+                    title={isSuperAdmin ? 'Afficher les informations du compte' : undefined}
+                  >
                     <div className="flex-shrink-0">
                       <div className={`h-11 w-11 rounded-full ${u.isLocked ? 'bg-red-50 text-red-600 border-red-100' : 'bg-blue-50 text-blue-600 border-blue-100'} border flex items-center justify-center font-black text-sm`}>
                         {(u.prenom || u.email).charAt(0).toUpperCase()}
@@ -592,6 +617,73 @@ export default function Admin() {
           </ul>
         )}
       </div>
+
+      {isSuperAdmin && selectedUser && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="user-details-title"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSelectedUser(null);
+          }}
+        >
+          <section className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <header className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600">SuperAdmin · Consultation</p>
+                <h2 id="user-details-title" className="mt-1 text-xl font-black text-slate-900">
+                  {selectedUser.prenom} {selectedUser.nom}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">Informations détaillées du compte utilisateur</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedUser(null)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Fermer les informations du compte"
+                title="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+
+            <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
+              <div className="rounded-xl bg-slate-50 p-4 sm:col-span-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Identité du compte</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <p className="text-sm text-slate-700"><strong>Email :</strong> {selectedUser.email || 'Non renseigné'}</p>
+                  <p className="text-sm text-slate-700"><strong>Téléphone :</strong> {selectedUser.telephone || 'Non renseigné'}</p>
+                  <p className="text-sm text-slate-700"><strong>UID :</strong> <span className="font-mono">{selectedUser.uid || selectedUser.id}</span></p>
+                  <p className="text-sm text-slate-700"><strong>Rôle :</strong> {selectedUser.role || 'Non renseigné'}</p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-blue-500">Périmètre d’accès</p>
+                <p className="mt-3 text-sm text-slate-700"><strong>Arrondissement :</strong> {selectedUser.arrondissement || 'Global'}</p>
+                <p className="mt-2 text-sm text-slate-700"><strong>Établissement :</strong> {selectedUserEtablissement?.nom || (selectedUser.etablissementId ? `ID ${selectedUser.etablissementId}` : 'Tous les établissements')}</p>
+                <p className="mt-2 text-sm text-slate-700"><strong>Droits :</strong> {selectedUser.rights || 'Non renseignés'}</p>
+              </div>
+
+              <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600">État de sécurité</p>
+                <p className={`mt-3 text-sm font-bold ${selectedUser.isLocked ? 'text-rose-700' : 'text-emerald-700'}`}>
+                  {selectedUser.isLocked ? 'Accès bloqué' : 'Compte actif'}
+                </p>
+                <p className="mt-2 text-sm text-slate-700"><strong>Tentatives échouées :</strong> {selectedUser.loginAttempts || 0}/5</p>
+                {selectedUser.lockExpiresAt && <p className="mt-2 text-sm text-slate-700"><strong>Fin du blocage :</strong> {new Date(selectedUser.lockExpiresAt).toLocaleString('fr-FR')}</p>}
+              </div>
+
+              <div className="rounded-xl border border-slate-200 p-4 sm:col-span-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Traçabilité</p>
+                <p className="mt-3 text-sm text-slate-700"><strong>Compte créé le :</strong> {selectedUser.createdAt ? new Date(selectedUser.createdAt).toLocaleString('fr-FR') : 'Date non disponible'}</p>
+                <p className="mt-2 text-xs text-slate-500">Le mot de passe initial, son hash et les jetons secrets ne sont jamais affichés. Pour modifier l’accès, utilisez les actions de gestion du compte.</p>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
