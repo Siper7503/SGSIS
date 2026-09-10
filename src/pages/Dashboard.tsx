@@ -1458,7 +1458,7 @@ export default function Dashboard() {
             Bonjour, {user?.prenom || 'Cher'} {user?.nom || 'Collaborateur'} !
           </h1>
           <p className="mt-2 text-blue-100 max-w-2xl text-sm leading-relaxed">
-            Bienvenue sur votre portail d'administration dédié. Vous disposez d'un droit complet de pilotage et de modification (CRUD) sur vos modules attribués : Gestion des Établissements (M1), Capitalisation des Effectifs (M3) et Communications Institutionnelles (M6).
+            Bienvenue sur votre portail de saisie et de suivi. Vous renseignez les données de votre établissement, puis les transmettez au Proviseur ou à la DSE selon votre rôle.
           </p>
           <div className="mt-6 flex flex-wrap gap-4 text-xs font-mono">
             <div className="bg-white bg-opacity-10 backdrop-blur-sm px-3.5 py-2 rounded-lg border border-white border-opacity-10">
@@ -1488,7 +1488,7 @@ export default function Dashboard() {
                 </div>
                 <h3 className="text-base font-bold text-gray-900">MODULE M1 : Gestion des Établissements</h3>
                 <p className="mt-2 text-xs text-gray-500 leading-relaxed">
-                  Créez des fiches d'établissement complètes avec géolocalisation, procédez à l'archivage logique temporaire et réalisez l'import en masse (CSV/Excel) des 339 établissements avec contrôle automatique des doublons.
+                  Consultez la fiche de votre établissement et vérifiez son rattachement. La création, l'importation et l'archivage des établissements restent réservés à la DSE.
                 </p>
               </div>
               <div className="mt-6 pt-4 border-t border-gray-50">
@@ -1496,7 +1496,7 @@ export default function Dashboard() {
                   to="/etablissements" 
                   className="inline-flex items-center text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline"
                 >
-                  Ouvrir le module d'édition M1
+                  Consulter mon établissement
                   <ArrowRight className="h-3.5 w-3.5 ml-1" />
                 </Link>
               </div>
@@ -1630,6 +1630,30 @@ export default function Dashboard() {
               </div>
             </div>
 
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900">Autres modules de saisie</h2>
+              <p className="text-xs text-slate-500 mt-1">Chaque transmission est suivie jusqu'à sa validation par la DSE.</p>
+            </div>
+            <Link to="/rapports-annuels" className="text-xs font-bold text-blue-600 hover:underline">Voir les rapports</Link>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+              { href: '/mobilier', label: 'Mobilier (M4)', icon: Briefcase, tone: 'text-amber-600 bg-amber-50' },
+              { href: '/constructions', label: 'Besoins de construction (M5)', icon: Hammer, tone: 'text-orange-600 bg-orange-50' },
+              { href: '/tice', label: 'Équipements TICE', icon: Monitor, tone: 'text-indigo-600 bg-indigo-50' },
+              { href: '/maintenance', label: 'Incidents à signaler', icon: AlertTriangle, tone: 'text-red-600 bg-red-50' },
+            ].map(({ href, label, icon: Icon, tone }) => (
+              <Link key={href} to={href} className="flex items-center gap-3 rounded-xl border border-white bg-white px-3 py-3 shadow-sm hover:border-blue-200 hover:shadow transition">
+                <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${tone}`}><Icon className="h-4 w-4" /></span>
+                <span className="text-xs font-bold text-slate-700">{label}</span>
+                <ArrowRight className="ml-auto h-3.5 w-3.5 text-slate-400" />
+              </Link>
+            ))}
           </div>
         </div>
 

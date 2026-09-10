@@ -3,12 +3,15 @@ import { useAuth } from '../components/AuthProvider.tsx';
 import { apiFetch } from '../lib/api.ts';
 import { Plus, Monitor, Wifi } from 'lucide-react';
 import { TiceForm } from '../components/TiceForm.tsx';
+import { ModuleWorkflowActions } from '../components/ModuleWorkflowActions.tsx';
+import { DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Tice() {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const canWrite = hasAnyRole(user?.role, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES]);
 
   const fetchData = async () => {
     if (!token) return;
@@ -53,7 +56,7 @@ export default function Tice() {
             Suivi des salles informatiques et de la connectivité.
           </p>
         </div>
-        <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
+        {canWrite && <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
           <button
             onClick={() => setIsFormOpen(true)}
             className="inline-flex items-center justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
@@ -61,7 +64,7 @@ export default function Tice() {
             <Plus className="h-4 w-4 mr-2" />
             Nouvelle évaluation
           </button>
-        </div>
+        </div>}
       </div>
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -76,7 +79,10 @@ export default function Tice() {
                  <h3 className="text-sm font-bold text-gray-900 flex items-center">
                    ID Établissement: {item.etablissementId}
                  </h3>
-                 <span className="text-xs text-gray-400">{new Date(item.createdAt).toLocaleDateString()}</span>
+                 <div className="flex flex-col items-end gap-1">
+                   <span className="text-xs text-gray-400">{new Date(item.createdAt).toLocaleDateString()}</span>
+                   <ModuleWorkflowActions module="tice" recordId={item.id} workflowStatus={item.workflowStatus} onUpdated={fetchData} compact />
+                 </div>
               </div>
               
               <div className="space-y-4">

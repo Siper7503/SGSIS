@@ -163,7 +163,7 @@ export function Layout() {
   const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
   const isArrondissementResp = hasAnyRole(role, ARRONDISSEMENT_ROLES);
 
-  if (isLocalActor && !(hasAnyRole(role, [ROLES.PROVISEUR]) && currentPath === '/admin') && !['/', '/etablissements', '/effectifs', '/communications', '/infrastructures', '/maintenance', '/rapports-annuels'].includes(currentPath)) {
+  if (isLocalActor && !(hasAnyRole(role, [ROLES.PROVISEUR]) && currentPath === '/admin') && !['/', '/etablissements', '/effectifs', '/communications', '/infrastructures', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/rapports-annuels'].includes(currentPath)) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -184,7 +184,7 @@ export function Layout() {
     );
   }
 
-  if (isArrondissementResp && !['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/maintenance', '/carte', '/rapports', '/rapports-annuels'].includes(currentPath)) {
+  if (isArrondissementResp && !['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/carte', '/rapports', '/rapports-annuels'].includes(currentPath)) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -285,11 +285,11 @@ export function Layout() {
         return item.href !== '/audit';
       }
       if (isLocal) {
-        // Interface 2 only sees Dashboard, M1, M2, M3, M6
-        return ['/', '/etablissements', '/infrastructures', '/effectifs', '/communications', '/maintenance', '/rapports-annuels'].includes(item.href) || (hasAnyRole(userRole, [ROLES.PROVISEUR]) && item.href === '/admin');
+        // Les responsables scolaires voient les modules de saisie de leur établissement.
+        return ['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapports-annuels'].includes(item.href) || (hasAnyRole(userRole, [ROLES.PROVISEUR]) && item.href === '/admin');
       }
       if (isArrondissementResp) {
-        return ['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/maintenance', '/carte', '/rapports', '/rapports-annuels'].includes(item.href);
+        return ['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/carte', '/rapports', '/rapports-annuels'].includes(item.href);
       }
       // Interface 3 (Observer/Lambda) sees everything except Admin (M8), Audit logs and predictions
       return !['/admin', '/audit', '/predictions'].includes(item.href);

@@ -3,6 +3,8 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../components/AuthProvider.tsx';
 import { Hammer, Edit2, Search } from 'lucide-react';
 import { InfrastructureForm } from '../components/InfrastructureForm.tsx';
+import { ModuleWorkflowActions } from '../components/ModuleWorkflowActions.tsx';
+import { DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Infrastructures() {
   const [infrastructures, setInfrastructures] = useState<any[]>([]);
@@ -33,7 +35,8 @@ export default function Infrastructures() {
     fetchInfrastructures();
   }, [token]);
 
-  const isLocalActor = user?.role === "Directeurs d'école" || user?.role === "Proviseur d'établissement" || user?.role === "Sécretaire Adminstratif";
+  const isLocalActor = hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
+  const canWrite = hasAnyRole(user?.role, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES]);
 
   const enrichedData = infrastructures.map((item) => {
     const userFullName = `${user?.prenom || ''} ${user?.nom || ''}`.trim().toLowerCase();
@@ -192,13 +195,16 @@ export default function Infrastructures() {
                           )}
                         </td>
                         <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
-                          <button
-                            onClick={() => setEditingEtablissement(item)}
-                            className="text-blue-600 hover:text-blue-900 flex items-center justify-end w-full"
-                          >
-                            <Edit2 className="h-4 w-4 mr-1" />
-                            {item.id ? 'Éditer' : 'Saisir'}
-                          </button>
+                          <div className="flex flex-col items-end gap-2">
+                            <ModuleWorkflowActions module="infrastructures" recordId={item.id} workflowStatus={item.workflowStatus} onUpdated={fetchInfrastructures} compact />
+                            {canWrite && <button
+                              onClick={() => setEditingEtablissement(item)}
+                              className="text-blue-600 hover:text-blue-900 flex items-center justify-end"
+                            >
+                              <Edit2 className="h-4 w-4 mr-1" />
+                              {item.id ? 'Éditer' : 'Saisir'}
+                            </button>}
+                          </div>
                         </td>
                       </tr>
                     ))

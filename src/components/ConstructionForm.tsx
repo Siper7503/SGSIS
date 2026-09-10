@@ -7,9 +7,10 @@ interface ConstructionFormProps {
   construction?: any;
   onSuccess: () => void;
   onCancel: () => void;
+  requestOnly?: boolean;
 }
 
-export function ConstructionForm({ construction, onSuccess, onCancel }: ConstructionFormProps) {
+export function ConstructionForm({ construction, onSuccess, onCancel, requestOnly = false }: ConstructionFormProps) {
   const { token } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +69,12 @@ export function ConstructionForm({ construction, onSuccess, onCancel }: Construc
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(requestOnly ? {
+          intitule: formData.intitule,
+          localisation: formData.localisation,
+          arrondissement: formData.arrondissement,
+          datesPrevisionnelles: formData.datesPrevisionnelles,
+        } : formData)
       });
 
       if (!res.ok) {
@@ -88,7 +94,7 @@ export function ConstructionForm({ construction, onSuccess, onCancel }: Construc
     <div className="bg-white shadow rounded-lg p-6">
       <div className="mb-6">
         <h2 className="text-xl font-medium text-gray-900">
-          {isEditing ? 'Modifier la construction' : 'Nouvelle construction'}
+          {requestOnly ? 'Signaler un besoin de construction' : (isEditing ? 'Modifier la construction' : 'Nouveau projet de construction')}
         </h2>
       </div>
       

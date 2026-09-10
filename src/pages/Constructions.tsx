@@ -4,6 +4,8 @@ import { useAuth } from '../components/AuthProvider.tsx';
 import { Plus, Edit2, Search, Building, MapPin, Calendar, HardHat, Layers, LayoutGrid, TrendingUp, TrendingDown, Percent, Clock } from 'lucide-react';
 import { ConstructionForm } from '../components/ConstructionForm.tsx';
 import { EtablissementForm } from '../components/EtablissementForm.tsx';
+import { ModuleWorkflowActions } from '../components/ModuleWorkflowActions.tsx';
+import { DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Constructions() {
   const [data, setData] = useState<any[]>([]);
@@ -13,7 +15,9 @@ export default function Constructions() {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [convertingItem, setConvertingItem] = useState<any>(null);
   const [viewMode, setViewMode] = useState<'kanban' | 'grid'>('kanban');
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isDse = hasAnyRole(user?.role, DSE_ROLES);
+  const isSchoolWriter = hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
 
   const fetchData = async () => {
     if (!token) return;
@@ -99,6 +103,7 @@ export default function Constructions() {
     return (
       <ConstructionForm
         construction={editingItem}
+        requestOnly={isSchoolWriter && !isDse}
         onSuccess={() => {
           setIsFormOpen(false);
           setEditingItem(null);
@@ -158,7 +163,7 @@ export default function Constructions() {
             className="inline-flex items-center justify-center rounded-lg border border-transparent bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 w-full sm:w-auto mt-2 sm:mt-0"
           >
             <Plus className="h-4 w-4 mr-1.5" />
-            Nouveau projet
+            {isSchoolWriter && !isDse ? 'Signaler un besoin' : 'Nouveau projet'}
           </button>
         </div>
       </div>
@@ -198,7 +203,7 @@ export default function Constructions() {
             {
               id: 'planifie',
               title: 'Planifié',
-              statusKeys: ['Planifié'],
+              statusKeys: ['Planifié', 'Demande'],
               bgClass: 'bg-slate-50/80 border-t-4 border-blue-500',
               headerBg: 'bg-blue-50 border-b border-blue-100',
               textClass: 'text-blue-800',
@@ -363,7 +368,7 @@ export default function Constructions() {
 
                           {/* Quick Actions */}
                           <div className="flex justify-between items-center pt-2 border-t border-gray-100 gap-2">
-                            {item.statut === 'Livré' ? (
+                            {isDse && item.statut === 'Livré' ? (
                               <button
                                 onClick={() => setConvertingItem(item)}
                                 className="text-emerald-600 hover:text-emerald-700 text-[11px] font-bold inline-flex items-center gap-0.5 transition-all"
@@ -376,14 +381,17 @@ export default function Constructions() {
                                 {item.statut === 'Livré (Converti)' ? 'Établissement actif' : `Statut : ${item.statut}`}
                               </span>
                             )}
+                            <ModuleWorkflowActions module="constructions" recordId={item.id} workflowStatus={item.workflowStatus} onUpdated={fetchData} compact />
                             
-                            <button
-                              onClick={() => setEditingItem(item)}
-                              className="text-blue-600 hover:text-blue-900 text-[11px] font-bold inline-flex items-center gap-0.5 ml-auto transition-all bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded"
-                            >
-                              <Edit2 className="h-3 w-3" />
-                              Éditer
-                            </button>
+                            {isDse && (
+                              <button
+                                onClick={() => setEditingItem(item)}
+                                className="text-blue-600 hover:text-blue-900 text-[11px] font-bold inline-flex items-center gap-0.5 ml-auto transition-all bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded"
+                              >
+                                <Edit2 className="h-3 w-3" />
+                                Éditer
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -495,7 +503,7 @@ export default function Constructions() {
                   )}
                 </div>
                 <div className="bg-gray-50 px-5 py-3.5 sm:px-6 flex justify-between items-center border-t border-gray-100 mt-auto gap-2">
-                  {item.statut === 'Livré' ? (
+                  {isDse && item.statut === 'Livré' ? (
                     <button
                       onClick={() => setConvertingItem(item)}
                       className="text-emerald-600 hover:text-emerald-700 text-xs font-bold inline-flex items-center gap-0.5 transition-all"
@@ -508,13 +516,16 @@ export default function Constructions() {
                       {item.statut === 'Livré (Converti)' ? 'Converti en Établissement' : `Projet ${item.statut}`}
                     </span>
                   )}
-                  <button
-                    onClick={() => setEditingItem(item)}
-                    className="text-blue-600 hover:text-blue-900 text-xs font-bold inline-flex items-center gap-0.5 ml-auto transition-all bg-white hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-gray-200"
-                  >
-                    <Edit2 className="h-3.5 w-3.5" />
-                    Éditer
-                  </button>
+                  <ModuleWorkflowActions module="constructions" recordId={item.id} workflowStatus={item.workflowStatus} onUpdated={fetchData} compact />
+                  {isDse && (
+                    <button
+                      onClick={() => setEditingItem(item)}
+                      className="text-blue-600 hover:text-blue-900 text-xs font-bold inline-flex items-center gap-0.5 ml-auto transition-all bg-white hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-gray-200"
+                    >
+                      <Edit2 className="h-3.5 w-3.5" />
+                      Éditer
+                    </button>
+                  )}
                 </div>
               </div>
             );

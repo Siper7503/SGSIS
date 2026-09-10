@@ -5,7 +5,7 @@ import { createServer as createViteServer } from "vite";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { getOrCreateUser } from "./src/db/users.ts";
 import { db } from "./src/db/index.ts";
-import { etablissements, effectifs, constructions, infrastructures, mobilier, communications, communicationReceipts, incidents, wash, tice, auditLogs, annualReports, users } from "./src/db/schema.ts";
+import { etablissements, effectifs, constructions, infrastructures, mobilier, communications, communicationReceipts, incidents, wash, tice, auditLogs, annualReports, moduleSubmissions, users } from "./src/db/schema.ts";
 import { asc, eq, and, ilike, ne, sql } from "drizzle-orm";
 import multer from "multer";
 import * as xlsx from "xlsx";
@@ -16,6 +16,7 @@ import bcrypt from "bcryptjs";
 import { createOneTimeToken, hashSecret, secretsMatch, signSession } from "./src/lib/auth-security.ts";
 import { ADMIN_MANAGED_ROLES, ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SCHOOL_USER_ROLES, SCHOOL_WRITE_ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from "./src/lib/roles.ts";
 import { createFacilitiesRouter } from "./src/server/routes/facilities.ts";
+import { attachModuleWorkflow, saveModuleWorkflow, isSchoolDataWriter } from "./src/server/module-workflow.ts";
 
 interface SimulatedEmail {
   id: string;
@@ -235,6 +236,7 @@ function filterRowsForRequester(rows: any[], requester: AuthRequest["user"]): an
 async function ensureDatabaseShape() {
   await db.execute(sql`alter table users add column if not exists lock_expires_at timestamp`);
   await db.execute(sql`alter table users add column if not exists etablissement_id integer`);
+  await db.execute(sql`alter table constructions add column if not exists etablissement_id integer references etablissements(id)`);
   await db.execute(sql`
     create table if not exists annual_reports (
       id serial primary key,
@@ -249,6 +251,23 @@ async function ensureDatabaseShape() {
       updated_at timestamp default now(),
       submitted_at timestamp,
       validated_at timestamp
+    )
+  `);
+  await db.execute(sql`
+    create table if not exists module_submissions (
+      id serial primary key,
+      module text not null,
+      record_id integer not null,
+      etablissement_id integer not null references etablissements(id),
+      statut text not null default 'Brouillon',
+      created_by_id integer references users(id),
+      submitted_by_id integer references users(id),
+      reviewed_by_id integer references users(id),
+      commentaire text,
+      created_at timestamp default now(),
+      updated_at timestamp default now(),
+      submitted_at timestamp,
+      reviewed_at timestamp
     )
   `);
 }
@@ -1882,7 +1901,8 @@ async function startServer() {
         })
         .from(etablissements)
         .leftJoin(infrastructures, eq(infrastructures.etablissementId, etablissements.id));
-      res.json(filterRowsForRequester(results, req.user));
+       const visible = filterRowsForRequester(results, req.user);
+       res.json(await attachModuleWorkflow(visible, 'infrastructures'));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1907,6 +1927,7 @@ async function startServer() {
         espacesLibres,
         conformite
       } = req.body;
+      const workflowAction = req.body.workflowAction === 'save' ? 'save' : 'submit';
 
       if (!etablissementId) {
         res.status(400).json({ error: "L'ID de l'établissement est requis." });
@@ -1919,6 +1940,7 @@ async function startServer() {
 
       const existing = await db.select().from(infrastructures).where(eq(infrastructures.etablissementId, etablissementId)).limit(1);
 
+      let savedInfrastructure;
       if (existing.length > 0) {
         const updated = await db.update(infrastructures).set({
           batimentsEtudes,
@@ -1936,7 +1958,7 @@ async function startServer() {
           conformite,
           lastUpdated: new Date()
         }).where(eq(infrastructures.etablissementId, etablissementId)).returning();
-        res.json(updated[0]);
+        savedInfrastructure = updated[0];
       } else {
         const inserted = await db.insert(infrastructures).values({
           etablissementId,
@@ -1954,8 +1976,16 @@ async function startServer() {
           espacesLibres,
           conformite
         }).returning();
-        res.json(inserted[0]);
+        savedInfrastructure = inserted[0];
       }
+      const workflow = await saveModuleWorkflow({
+        module: 'infrastructures',
+        recordId: savedInfrastructure.id,
+        etablissementId: Number(etablissementId),
+        requester: req.user,
+        action: workflowAction
+      });
+      res.json({ ...savedInfrastructure, workflowStatus: workflow.statut });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1979,7 +2009,8 @@ async function startServer() {
         })
         .from(etablissements)
         .leftJoin(effectifs, eq(effectifs.etablissementId, etablissements.id));
-      res.json(filterRowsForRequester(results, req.user));
+      const visible = filterRowsForRequester(results, req.user);
+      res.json(await attachModuleWorkflow(visible, 'effectifs'));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1989,6 +2020,7 @@ async function startServer() {
     if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : Vous n'avez pas les droits d'écriture requis.")) return;
     try {
       const { etablissementId, anneeScolaire, elevesFilles, elevesGarcons, enseignants, personnelsAdmin } = req.body;
+      const workflowAction = req.body.workflowAction === 'save' ? 'save' : 'submit';
       if (!etablissementId || !anneeScolaire) {
         res.status(400).json({ error: "L'ID de l'établissement et l'année scolaire sont requis." });
         return;
@@ -2001,6 +2033,7 @@ async function startServer() {
         eq(effectifs.etablissementId, etablissementId)
       ).limit(1);
 
+      let savedEffectifs;
       if (existing.length > 0) {
         // Update the most recent or the matching one (simplified: update the first one found)
         const updated = await db.update(effectifs).set({
@@ -2010,7 +2043,7 @@ async function startServer() {
           personnelsAdmin,
           anneeScolaire
         }).where(eq(effectifs.id, existing[0].id)).returning();
-        res.json(updated[0]);
+        savedEffectifs = updated[0];
       } else {
         const inserted = await db.insert(effectifs).values({
           etablissementId,
@@ -2020,8 +2053,16 @@ async function startServer() {
           enseignants,
           personnelsAdmin
         }).returning();
-        res.json(inserted[0]);
+        savedEffectifs = inserted[0];
       }
+      const workflow = await saveModuleWorkflow({
+        module: 'effectifs',
+        recordId: savedEffectifs.id,
+        etablissementId: Number(etablissementId),
+        requester: req.user,
+        action: workflowAction
+      });
+      res.json({ ...savedEffectifs, workflowStatus: workflow.statut });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -2051,22 +2092,29 @@ async function startServer() {
         .from(etablissements)
         .leftJoin(mobilier, eq(mobilier.etablissementId, etablissements.id))
         .leftJoin(effectifs, eq(effectifs.etablissementId, etablissements.id));
-      res.json(filterRowsForRequester(results, req.user));
+      const visible = filterRowsForRequester(results, req.user);
+      res.json(await attachModuleWorkflow(visible, 'mobilier'));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
   app.post("/api/mobilier", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : Seule la DSE peut modifier le stock mobilier.")) return;
+    if (!requireAnyRole(req, res, SCHOOL_WRITE_ROLES, "Accès refusé : vous n'avez pas les droits d'écriture sur le mobilier.")) return;
     try {
       const { etablissementId, tablesBancs, chaisesEleves, tablesBureau, chaisesBureau } = req.body;
+      const workflowAction = req.body.workflowAction === 'save' ? 'save' : 'submit';
       if (!etablissementId) {
         res.status(400).json({ error: "L'ID de l'établissement est requis." });
         return;
       }
+      if (hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES) && Number(etablissementId) !== req.user?.etablissementId) {
+        res.status(403).json({ error: "Vous ne pouvez modifier que le mobilier de votre établissement." });
+        return;
+      }
       const existing = await db.select().from(mobilier).where(eq(mobilier.etablissementId, etablissementId)).limit(1);
       
+      let savedMobilier;
       if (existing.length > 0) {
         const updated = await db.update(mobilier).set({
           tablesBancs,
@@ -2075,7 +2123,7 @@ async function startServer() {
           chaisesBureau,
           lastUpdated: new Date()
         }).where(eq(mobilier.etablissementId, etablissementId)).returning();
-        res.json(updated[0]);
+        savedMobilier = updated[0];
       } else {
         const inserted = await db.insert(mobilier).values({
           etablissementId,
@@ -2084,8 +2132,16 @@ async function startServer() {
           tablesBureau,
           chaisesBureau
         }).returning();
-        res.json(inserted[0]);
+        savedMobilier = inserted[0];
       }
+      const workflow = await saveModuleWorkflow({
+        module: 'mobilier',
+        recordId: savedMobilier.id,
+        etablissementId: Number(etablissementId),
+        requester: req.user,
+        action: workflowAction
+      });
+      res.json({ ...savedMobilier, workflowStatus: workflow.statut });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -2156,14 +2212,15 @@ async function startServer() {
   app.get("/api/constructions", requireAuth, async (req: AuthRequest, res) => {
     try {
       const results = await db.select().from(constructions).orderBy(constructions.createdAt);
-      res.json(filterRowsForRequester(results, req.user));
+      const visible = filterRowsForRequester(results, req.user);
+      res.json(await attachModuleWorkflow(visible, 'constructions'));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
   app.post("/api/constructions", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : Seule la DSE peut créer des projets de construction.")) return;
+    if (!requireAnyRole(req, res, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES], "Accès refusé : seuls la DSE et les responsables scolaires peuvent signaler une construction.")) return;
     try {
       const { intitule, localisation, arrondissement, datesPrevisionnelles, maitreOuvrage, budget, modeleType, statut, avancement } = req.body;
       if (!intitule) {
@@ -2171,16 +2228,23 @@ async function startServer() {
         return;
       }
       
+      const isLocal = hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES);
+      if (isLocal && !req.user?.etablissementId) {
+        res.status(400).json({ error: "Votre compte n'est pas rattaché à un établissement." });
+        return;
+      }
+      const targetEtablissementId = isLocal ? req.user?.etablissementId : (req.body.etablissementId ? Number(req.body.etablissementId) : null);
       const inserted = await db.insert(constructions).values({
+        etablissementId: targetEtablissementId || null,
         intitule,
-        localisation,
-        arrondissement,
+        localisation: isLocal ? (localisation || null) : localisation,
+        arrondissement: isLocal ? (req.user?.arrondissement || arrondissement || null) : arrondissement,
         datesPrevisionnelles,
-        maitreOuvrage,
-        budget,
-        modeleType,
-        avancement: avancement != null ? parseInt(avancement.toString()) : 0,
-        statut: statut || 'Planifié'
+        maitreOuvrage: isLocal ? null : maitreOuvrage,
+        budget: isLocal ? null : budget,
+        modeleType: isLocal ? null : modeleType,
+        avancement: isLocal ? 0 : (avancement != null ? parseInt(avancement.toString()) : 0),
+        statut: isLocal ? 'Demande' : (statut || 'Planifié')
       }).returning();
       
       // Journalisation de l'action
@@ -2189,9 +2253,20 @@ async function startServer() {
         "CREATION_PROJET_CONSTRUCTION",
         "constructions",
         inserted[0].id,
-        { intitule, statut: statut || 'Planifié', budget }
+        { intitule, statut: isLocal ? 'Demande' : (statut || 'Planifié'), budget }
       );
 
+      if (targetEtablissementId) {
+        const workflow = await saveModuleWorkflow({
+          module: 'constructions',
+          recordId: inserted[0].id,
+          etablissementId: targetEtablissementId,
+          requester: req.user,
+          action: isLocal ? 'submit' : 'save'
+        });
+        res.json({ ...inserted[0], workflowStatus: workflow.statut });
+        return;
+      }
       res.json(inserted[0]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2776,6 +2851,73 @@ async function startServer() {
     }
   });
 
+  // Common review workflow for establishment data modules.
+  app.post("/api/module-submissions/:module/:recordId/decision", requireAuth, async (req: AuthRequest, res) => {
+    if (!req.user || !hasAnyRole(req.user.role, [...DSE_ROLES, ...ARRONDISSEMENT_ROLES, ROLES.PROVISEUR])) {
+      res.status(403).json({ error: "Acces refuse : ce circuit de validation est reserve aux profils metier habilites." });
+      return;
+    }
+    try {
+      const { decision, commentaire } = req.body;
+      if (!['approuver', 'rejeter'].includes(decision)) {
+        res.status(400).json({ error: "Decision invalide." });
+        return;
+      }
+      const recordId = Number(req.params.recordId);
+      const rows = await db.select().from(moduleSubmissions).where(and(
+        eq(moduleSubmissions.module, req.params.module),
+        eq(moduleSubmissions.recordId, recordId)
+      )).limit(1);
+      if (rows.length === 0) {
+        res.status(404).json({ error: "Aucune transmission trouvee pour cette donnee." });
+        return;
+      }
+      const submission = rows[0];
+      const establishmentRows = await db.select().from(etablissements).where(eq(etablissements.id, submission.etablissementId)).limit(1);
+      const establishment = establishmentRows[0];
+      const isDse = hasAnyRole(req.user.role, DSE_ROLES);
+      const isProviseur = hasAnyRole(req.user.role, [ROLES.PROVISEUR]);
+      const isArrondissement = hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES);
+
+      if (isProviseur && req.user.etablissementId !== submission.etablissementId) {
+        res.status(403).json({ error: "Vous ne pouvez traiter que les donnees de votre etablissement." });
+        return;
+      }
+      if (isArrondissement && (!establishment || establishment.arrondissement !== req.user.arrondissement)) {
+        res.status(403).json({ error: "Vous ne pouvez traiter que les donnees de votre arrondissement." });
+        return;
+      }
+      if (isArrondissement && decision === 'approuver') {
+        res.status(403).json({ error: "Le responsable d'arrondissement peut demander une correction, mais la validation appartient au responsable scolaire ou a la DSE." });
+        return;
+      }
+
+      let nextStatus: string;
+      if (decision === 'rejeter') {
+        nextStatus = 'A corriger';
+      } else if (isProviseur && submission.statut === 'Soumis au proviseur') {
+        nextStatus = 'Soumis au DSE';
+      } else if (isDse && submission.statut === 'Soumis au DSE') {
+        nextStatus = 'Valide';
+      } else {
+        res.status(409).json({ error: "Cette donnee ne se trouve pas dans un etat compatible avec votre decision." });
+        return;
+      }
+
+      const updated = await db.update(moduleSubmissions).set({
+        statut: nextStatus,
+        reviewedById: req.user.id || null,
+        reviewedAt: new Date(),
+        commentaire: commentaire || null,
+        updatedAt: new Date()
+      }).where(eq(moduleSubmissions.id, submission.id)).returning();
+      await logAudit(req.user.id, decision === 'approuver' ? 'VALIDATION_DONNEE_ETABLISSEMENT' : 'RETOUR_DONNEE_ETABLISSEMENT', req.params.module, recordId, { statut: nextStatus, commentaire });
+      res.json({ success: true, submission: updated[0] });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.use(createFacilitiesRouter(logAudit));
 
   // M: Cantine & WASH My Establishment Look-up
@@ -2824,6 +2966,57 @@ async function startServer() {
       const { nom, type, arrondissement, forages, latrines, cantinesCount } = req.body;
       if (!nom || !type) {
         return res.status(400).json({ error: "Le nom et le type d'établissement sont obligatoires." });
+      }
+
+      if (req.user?.etablissementId) {
+        const etablissementId = req.user.etablissementId;
+        const target = await db.select().from(etablissements).where(eq(etablissements.id, etablissementId)).limit(1);
+        if (target.length === 0) return res.status(404).json({ error: "Votre etablissement de rattachement est introuvable." });
+        const existingWash = await db.select().from(wash).where(eq(wash.etablissementId, etablissementId)).limit(1);
+        const payload = {
+          forages: parseInt(forages || 0),
+          foragesFonctionnels: parseInt(forages || 0),
+          latrines: parseInt(latrines || 0),
+          latrinesFonctionnelles: parseInt(latrines || 0),
+          cantineDisponibilite: parseInt(cantinesCount || 0) > 0,
+          cantinesCount: parseInt(cantinesCount || 0),
+          vivresDisponibles: `Nombre de cantines: ${cantinesCount || 0}`
+        };
+        const saved = existingWash.length > 0
+          ? await db.update(wash).set(payload).where(eq(wash.id, existingWash[0].id)).returning()
+          : await db.insert(wash).values({ etablissementId, ...payload }).returning();
+        const workflow = await saveModuleWorkflow({ module: 'wash', recordId: saved[0].id, etablissementId, requester: req.user, action: 'submit' });
+        await logAudit(req.user?.id, 'CREATE', 'cantine_wash_submit', etablissementId, { nomEtablissement: target[0].nom, forages, latrines, cantinesCount });
+        return res.json({ success: true, etablissementId, wash: { ...saved[0], workflowStatus: workflow.statut } });
+      }
+
+      if (req.user?.etablissementId) {
+        const etablissementId = req.user.etablissementId;
+        const target = await db.select().from(etablissements).where(eq(etablissements.id, etablissementId)).limit(1);
+        if (target.length === 0) return res.status(404).json({ error: "Votre etablissement de rattachement est introuvable." });
+        const { batimentsEtudes, batimentsAdmin, laboratoires, infirmerie } = req.body;
+        const studyVal = parseInt(batimentsEtudes || 0);
+        const adminVal = parseInt(batimentsAdmin || 0);
+        const existingInfra = await db.select().from(infrastructures).where(eq(infrastructures.etablissementId, etablissementId)).limit(1);
+        const saved = existingInfra.length > 0
+          ? await db.update(infrastructures).set({
+            batimentsEtudes: { total: studyVal, bonEtat: studyVal, degrade: 0, horsService: 0 },
+            batimentsAdmin: { total: adminVal, bonEtat: adminVal, degrade: 0, horsService: 0 },
+            laboratoires: parseInt(laboratoires || 0),
+            infirmerie: parseInt(infirmerie || 0),
+            lastUpdated: new Date()
+          }).where(eq(infrastructures.id, existingInfra[0].id)).returning()
+          : await db.insert(infrastructures).values({
+            etablissementId,
+            batimentsEtudes: { total: studyVal, bonEtat: studyVal, degrade: 0, horsService: 0 },
+            batimentsAdmin: { total: adminVal, bonEtat: adminVal, degrade: 0, horsService: 0 },
+            laboratoires: parseInt(laboratoires || 0),
+            infirmerie: parseInt(infirmerie || 0),
+            conformite: "Non conforme"
+          }).returning();
+        const workflow = await saveModuleWorkflow({ module: 'infrastructures', recordId: saved[0].id, etablissementId, requester: req.user, action: 'submit' });
+        await logAudit(req.user?.id, 'CREATE_INFRASTRUCTURE', 'infrastructures', saved[0].id, { nom: target[0].nom, batimentsEtudes, batimentsAdmin, laboratoires, infirmerie });
+        return res.json({ success: true, etablissementId, infrastructure: { ...saved[0], workflowStatus: workflow.statut } });
       }
 
       // Check if this establishment already exists by name (case-insensitive) and type

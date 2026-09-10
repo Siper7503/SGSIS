@@ -17,7 +17,8 @@ import {
   Building
 } from 'lucide-react';
 import { MobilierForm } from '../components/MobilierForm.tsx';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { ModuleWorkflowActions } from '../components/ModuleWorkflowActions.tsx';
+import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Mobilier() {
   const [data, setData] = useState<any[]>([]);
@@ -125,6 +126,8 @@ export default function Mobilier() {
   });
 
   const isDse = hasAnyRole(user?.role, DSE_ROLES);
+  const canWrite = isDse || hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
+  const canReview = hasAnyRole(user?.role, ARRONDISSEMENT_ROLES);
   const isArrondissementResp = hasAnyRole(user?.role, ARRONDISSEMENT_ROLES);
 
   // Filter enriched data
@@ -390,7 +393,7 @@ export default function Mobilier() {
                 <th scope="col" className="px-3 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider">
                   Niveau d'Urgence
                 </th>
-                {isDse && (
+                {(canWrite || canReview) && (
                   <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
                     <span className="sr-only">Actions</span>
                   </th>
@@ -400,13 +403,13 @@ export default function Mobilier() {
             <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan={isDse ? 6 : 5} className="py-12 text-center text-sm text-slate-400">
+                  <td colSpan={canWrite || canReview ? 6 : 5} className="py-12 text-center text-sm text-slate-400">
                     Chargement de l'inventaire et des besoins mobiliers...
                   </td>
                 </tr>
               ) : sortedData.length === 0 ? (
                 <tr>
-                  <td colSpan={isDse ? 6 : 5} className="py-12 text-center text-sm text-slate-400">
+                  <td colSpan={canWrite || canReview ? 6 : 5} className="py-12 text-center text-sm text-slate-400">
                     Aucun établissement trouvé pour ces filtres.
                   </td>
                 </tr>
@@ -486,29 +489,30 @@ export default function Mobilier() {
                     </td>
 
                     {/* Actions dropdown / buttons */}
-                    {isDse && (
+                    {(canWrite || canReview) && (
                       <td className="py-4 pl-3 pr-4 text-right text-xs font-bold sm:pr-6">
                         <div className="flex justify-end gap-2.5">
-                          
-                          {/* Dotation action */}
-                          <button
-                            onClick={() => setDotationTarget(item)}
-                            className="bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg px-2.5 py-1.5 flex items-center gap-1 border border-blue-100 transition"
-                            title="Enregistrer une livraison"
-                          >
-                            <Truck className="h-3.5 w-3.5" />
-                            <span>Dotation</span>
-                          </button>
+                          {isDse && (
+                            <button
+                              onClick={() => setDotationTarget(item)}
+                              className="bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg px-2.5 py-1.5 flex items-center gap-1 border border-blue-100 transition"
+                              title="Enregistrer une livraison"
+                            >
+                              <Truck className="h-3.5 w-3.5" />
+                              <span>Dotation</span>
+                            </button>
+                          )}
 
                           {/* Traditional edit */}
-                          <button
+                          {canWrite && <button
                             onClick={() => setEditingEtablissement(item)}
                             className="bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg px-2.5 py-1.5 flex items-center gap-1 border border-slate-200 transition"
                             title="Saisir stock"
                           >
                             <Edit2 className="h-3.5 w-3.5" />
                             <span>Saisir</span>
-                          </button>
+                          </button>}
+                          <ModuleWorkflowActions module="mobilier" recordId={item.id} workflowStatus={item.workflowStatus} onUpdated={fetchData} compact />
 
                         </div>
                       </td>

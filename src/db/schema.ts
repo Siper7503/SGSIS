@@ -75,6 +75,7 @@ export const mobilier = pgTable('mobilier', {
 
 export const constructions = pgTable('constructions', {
   id: serial('id').primaryKey(),
+  etablissementId: integer('etablissement_id').references(() => etablissements.id),
   intitule: text('intitule').notNull(),
   localisation: text('localisation'),
   arrondissement: text('arrondissement'),
@@ -162,6 +163,22 @@ export const annualReports = pgTable('annual_reports', {
   updatedAt: timestamp('updated_at').defaultNow(),
   submittedAt: timestamp('submitted_at'),
   validatedAt: timestamp('validated_at'),
+});
+
+export const moduleSubmissions = pgTable('module_submissions', {
+  id: serial('id').primaryKey(),
+  module: text('module').notNull(),
+  recordId: integer('record_id').notNull(),
+  etablissementId: integer('etablissement_id').references(() => etablissements.id).notNull(),
+  statut: text('statut').notNull().default('Brouillon'),
+  createdById: integer('created_by_id').references(() => users.id),
+  submittedById: integer('submitted_by_id').references(() => users.id),
+  reviewedById: integer('reviewed_by_id').references(() => users.id),
+  commentaire: text('commentaire'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+  submittedAt: timestamp('submitted_at'),
+  reviewedAt: timestamp('reviewed_at'),
 });
 
 export const communicationReceipts = pgTable('communication_receipts', {

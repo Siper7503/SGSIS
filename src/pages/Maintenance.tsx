@@ -4,6 +4,7 @@ import { apiFetch } from '../lib/api.ts';
 import { Plus, Search, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { IncidentForm } from '../components/IncidentForm.tsx';
 import { DSE_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { ModuleWorkflowActions } from '../components/ModuleWorkflowActions.tsx';
 
 export default function Maintenance() {
   const [data, setData] = useState<any[]>([]);
@@ -164,6 +165,7 @@ export default function Maintenance() {
                     Marquer résolu
                   </button>
                 )}
+                <ModuleWorkflowActions module="incidents" recordId={item.id} workflowStatus={item.workflowStatus} onUpdated={fetchData} compact />
               </div>
             </div>
           ))

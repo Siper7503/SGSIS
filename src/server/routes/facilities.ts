@@ -4,6 +4,7 @@ import { etablissements, incidents, tice, wash } from '../../db/schema.ts';
 import { eq } from 'drizzle-orm';
 import { requireAuth, AuthRequest } from '../../middleware/auth.ts';
 import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../../lib/roles.ts';
+import { attachModuleWorkflow, saveModuleWorkflow, isSchoolDataWriter } from '../module-workflow.ts';
 
 type AuditLogger = (
   userId: number | null | undefined,
@@ -37,6 +38,14 @@ function requireIncidentReporter(req: AuthRequest, res: import('express').Respon
   return true;
 }
 
+function requireSchoolDataWriter(req: AuthRequest, res: import('express').Response): boolean {
+  if (!isSchoolDataWriter(req.user?.role)) {
+    res.status(403).json({ error: "Acces refuse : seuls la DSE et les responsables d'etablissement peuvent renseigner ce module." });
+    return false;
+  }
+  return true;
+}
+
 export function createFacilitiesRouter(logAudit: AuditLogger): Router {
   const router = Router();
 
@@ -44,15 +53,15 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
     try {
       const results = await db.select().from(incidents).orderBy(incidents.dateSignalement);
       if (hasAnyRole(req.user?.role, [...DSE_ROLES, ...SUPER_ADMIN_ROLES])) {
-        res.json(results);
+        res.json(await attachModuleWorkflow(results, 'incidents'));
       } else if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES) && req.user?.arrondissement) {
         const scopedEstablishments = await db.select({ id: etablissements.id })
           .from(etablissements)
           .where(eq(etablissements.arrondissement, req.user.arrondissement));
         const allowedIds = new Set(scopedEstablishments.map((etablissement) => etablissement.id));
-        res.json(results.filter((incident) => incident.etablissementId && allowedIds.has(incident.etablissementId)));
+        res.json(await attachModuleWorkflow(results.filter((incident) => incident.etablissementId && allowedIds.has(incident.etablissementId)), 'incidents'));
       } else if (req.user?.etablissementId) {
-        res.json(results.filter((incident) => incident.etablissementId === req.user?.etablissementId));
+        res.json(await attachModuleWorkflow(results.filter((incident) => incident.etablissementId === req.user?.etablissementId), 'incidents'));
       } else {
         res.json([]);
       }
@@ -65,6 +74,7 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
     if (!requireIncidentReporter(req, res)) return;
     try {
       const { etablissementId, type, description } = req.body;
+      const workflowAction = req.body.workflowAction === 'save' ? 'save' : 'submit';
       if (!type || typeof type !== 'string' || !description || typeof description !== 'string') {
         res.status(400).json({ error: "Le type et la description de l'incident sont obligatoires." });
         return;
@@ -79,8 +89,15 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
         description,
         signaleParId: req.user?.id || null
       }).returning();
+      const workflow = await saveModuleWorkflow({
+        module: 'incidents',
+        recordId: inserted[0].id,
+        etablissementId: Number(etablissementId),
+        requester: req.user,
+        action: workflowAction
+      });
       await logAudit(req.user?.id, 'CREATE', 'incidents', inserted[0].id, { type, description });
-      res.json(inserted[0]);
+      res.json({ ...inserted[0], workflowStatus: workflow.statut });
     } catch (error: any) {
       res.status(error.message?.includes('doit être') ? 400 : 500).json({ error: error.message });
     }
@@ -120,16 +137,17 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
         : rows.filter((row) => hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)
           ? row.arrondissement === req.user?.arrondissement
           : row.record.etablissementId === req.user?.etablissementId);
-      res.json(visible.map((row) => ({ ...row.record, arrondissement: row.arrondissement })));
+      res.json(await attachModuleWorkflow(visible.map((row) => ({ ...row.record, arrondissement: row.arrondissement })), 'wash'));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
   router.post('/api/wash', requireAuth, async (req: AuthRequest, res) => {
-    if (!requireDseRole(req, res)) return;
+    if (!requireSchoolDataWriter(req, res)) return;
     try {
       const { etablissementId, forages, foragesFonctionnels, latrines, latrinesFonctionnelles, cantineDisponibilite, vivresDisponibles } = req.body;
+      const workflowAction = req.body.workflowAction === 'save' ? 'save' : 'submit';
       const totalForages = parseNonNegativeInteger(forages, 'Le nombre de forages');
       const functionalForages = parseNonNegativeInteger(foragesFonctionnels, 'Le nombre de forages fonctionnels');
       const totalLatrines = parseNonNegativeInteger(latrines, 'Le nombre de latrines');
@@ -138,17 +156,39 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
         res.status(400).json({ error: "Le nombre d'équipements fonctionnels ne peut pas dépasser le total." });
         return;
       }
-      const inserted = await db.insert(wash).values({
-        etablissementId: parseNonNegativeInteger(etablissementId, "L'établissement"),
-        forages: totalForages,
-        foragesFonctionnels: functionalForages,
-        latrines: totalLatrines,
-        latrinesFonctionnelles: functionalLatrines,
-        cantineDisponibilite: Boolean(cantineDisponibilite),
-        vivresDisponibles
-      }).returning();
-      await logAudit(req.user?.id, 'CREATE', 'wash', inserted[0].id, req.body);
-      res.json(inserted[0]);
+      if (hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES) && Number(etablissementId) !== req.user?.etablissementId) {
+        res.status(403).json({ error: "Vous ne pouvez renseigner que le WASH de votre etablissement." });
+        return;
+      }
+      const existing = await db.select().from(wash).where(eq(wash.etablissementId, Number(etablissementId))).limit(1);
+      const saved = existing.length > 0
+        ? await db.update(wash).set({
+          forages: totalForages,
+          foragesFonctionnels: functionalForages,
+          latrines: totalLatrines,
+          latrinesFonctionnelles: functionalLatrines,
+          cantineDisponibilite: Boolean(cantineDisponibilite),
+          vivresDisponibles
+        }).where(eq(wash.id, existing[0].id)).returning()
+        : await db.insert(wash).values({
+          etablissementId: parseNonNegativeInteger(etablissementId, "L'etablissement"),
+          forages: totalForages,
+          foragesFonctionnels: functionalForages,
+          latrines: totalLatrines,
+          latrinesFonctionnelles: functionalLatrines,
+          cantineDisponibilite: Boolean(cantineDisponibilite),
+          vivresDisponibles
+        }).returning();
+      const workflow = await saveModuleWorkflow({
+        module: 'wash',
+        recordId: saved[0].id,
+        etablissementId: Number(etablissementId),
+        requester: req.user,
+        action: workflowAction
+      });
+      await logAudit(req.user?.id, 'CREATE', 'wash', saved[0].id, req.body);
+      res.json({ ...saved[0], workflowStatus: workflow.statut });
+      return;
     } catch (error: any) {
       res.status(error.message?.includes('doit être') ? 400 : 500).json({ error: error.message });
     }
@@ -164,32 +204,54 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
         : rows.filter((row) => hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)
           ? row.arrondissement === req.user?.arrondissement
           : row.record.etablissementId === req.user?.etablissementId);
-      res.json(visible.map((row) => ({ ...row.record, arrondissement: row.arrondissement })));
+      res.json(await attachModuleWorkflow(visible.map((row) => ({ ...row.record, arrondissement: row.arrondissement })), 'tice'));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
   router.post('/api/tice', requireAuth, async (req: AuthRequest, res) => {
-    if (!requireDseRole(req, res)) return;
+    if (!requireSchoolDataWriter(req, res)) return;
     try {
       const { etablissementId, sallesInformatiques, ordinateurs, ordinateursFonctionnels, connectiviteInternet, typeConnexion } = req.body;
+      const workflowAction = req.body.workflowAction === 'save' ? 'save' : 'submit';
       const totalComputers = parseNonNegativeInteger(ordinateurs, 'Le nombre d\'ordinateurs');
       const functionalComputers = parseNonNegativeInteger(ordinateursFonctionnels, 'Le nombre d\'ordinateurs fonctionnels');
       if (functionalComputers > totalComputers) {
         res.status(400).json({ error: "Le nombre d'ordinateurs fonctionnels ne peut pas dépasser le total." });
         return;
       }
-      const inserted = await db.insert(tice).values({
-        etablissementId: parseNonNegativeInteger(etablissementId, "L'établissement"),
-        sallesInformatiques: parseNonNegativeInteger(sallesInformatiques, 'Le nombre de salles informatiques'),
-        ordinateurs: totalComputers,
-        ordinateursFonctionnels: functionalComputers,
-        connectiviteInternet: Boolean(connectiviteInternet),
-        typeConnexion
-      }).returning();
-      await logAudit(req.user?.id, 'CREATE', 'tice', inserted[0].id, req.body);
-      res.json(inserted[0]);
+      if (hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES) && Number(etablissementId) !== req.user?.etablissementId) {
+        res.status(403).json({ error: "Vous ne pouvez renseigner que les equipements TICE de votre etablissement." });
+        return;
+      }
+      const existing = await db.select().from(tice).where(eq(tice.etablissementId, Number(etablissementId))).limit(1);
+      const saved = existing.length > 0
+        ? await db.update(tice).set({
+          sallesInformatiques: parseNonNegativeInteger(sallesInformatiques, 'Le nombre de salles informatiques'),
+          ordinateurs: totalComputers,
+          ordinateursFonctionnels: functionalComputers,
+          connectiviteInternet: Boolean(connectiviteInternet),
+          typeConnexion
+        }).where(eq(tice.id, existing[0].id)).returning()
+        : await db.insert(tice).values({
+          etablissementId: parseNonNegativeInteger(etablissementId, "L'etablissement"),
+          sallesInformatiques: parseNonNegativeInteger(sallesInformatiques, 'Le nombre de salles informatiques'),
+          ordinateurs: totalComputers,
+          ordinateursFonctionnels: functionalComputers,
+          connectiviteInternet: Boolean(connectiviteInternet),
+          typeConnexion
+        }).returning();
+      const workflow = await saveModuleWorkflow({
+        module: 'tice',
+        recordId: saved[0].id,
+        etablissementId: Number(etablissementId),
+        requester: req.user,
+        action: workflowAction
+      });
+      await logAudit(req.user?.id, 'CREATE', 'tice', saved[0].id, req.body);
+      res.json({ ...saved[0], workflowStatus: workflow.statut });
+      return;
     } catch (error: any) {
       res.status(error.message?.includes('doit être') ? 400 : 500).json({ error: error.message });
     }
