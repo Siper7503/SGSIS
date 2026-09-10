@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthProvider.tsx';
 import { Login } from './Login.tsx';
-import { Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Briefcase, Map as MapIcon, Sparkles, Menu, X, WifiOff, AlertTriangle, Droplets, Monitor, ShieldAlert } from 'lucide-react';
+import { Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Briefcase, Map as MapIcon, Sparkles, Menu, X, WifiOff, AlertTriangle, Droplets, Monitor, ShieldAlert, UserCircle, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { getQueuedActions, syncData } from '../lib/sync.ts';
+import { apiFetch } from '../lib/api.ts';
 import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 const navigation = [
@@ -27,11 +28,79 @@ const navigation = [
 ];
 
 export function Layout() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, token, logout } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [pendingSyncs, setPendingSyncs] = useState(getQueuedActions().length);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileEstablishmentName, setProfileEstablishmentName] = useState<string | null>(null);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [profileNewPassword, setProfileNewPassword] = useState('');
+  const [profilePasswordConfirmation, setProfilePasswordConfirmation] = useState('');
+  const [showProfileNewPassword, setShowProfileNewPassword] = useState(false);
+  const [showProfilePasswordConfirmation, setShowProfilePasswordConfirmation] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
+  const [profileSaving, setProfileSaving] = useState(false);
+
+  useEffect(() => {
+    if (!profileOpen || !token || !user?.etablissementId) return;
+    apiFetch('/api/etablissements', { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => res.json())
+      .then((items) => {
+        if (!Array.isArray(items)) return;
+        const establishment = items.find((item) => Number(item.id) === Number(user.etablissementId));
+        setProfileEstablishmentName(establishment?.nom || null);
+      })
+      .catch(() => setProfileEstablishmentName(null));
+  }, [profileOpen, token, user?.etablissementId]);
+
+  const openProfile = () => {
+    setProfileOpen(true);
+    setProfileError(null);
+    setProfileSuccess(null);
+    setCurrentPassword('');
+    setProfileNewPassword('');
+    setProfilePasswordConfirmation('');
+    setShowProfileNewPassword(false);
+    setShowProfilePasswordConfirmation(false);
+  };
+
+  const handleProfilePasswordChange = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!token) return;
+    setProfileError(null);
+    setProfileSuccess(null);
+
+    if (profileNewPassword !== profilePasswordConfirmation) {
+      setProfileError('La confirmation du nouveau mot de passe ne correspond pas.');
+      return;
+    }
+
+    setProfileSaving(true);
+    try {
+      const response = await apiFetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ currentPassword, newPassword: profileNewPassword })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Impossible de modifier le mot de passe.');
+
+      setCurrentPassword('');
+      setProfileNewPassword('');
+      setProfilePasswordConfirmation('');
+      setProfileSuccess('Votre mot de passe a ete modifie avec succes.');
+    } catch (error: any) {
+      setProfileError(error.message);
+    } finally {
+      setProfileSaving(false);
+    }
+  };
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -268,7 +337,12 @@ export function Layout() {
         </div>
         <div className="border-t border-gray-200 p-4 shrink-0">
           <div className="space-y-3">
-            <div className="flex items-center">
+            <button
+              type="button"
+              onClick={openProfile}
+              className="flex w-full items-center rounded-xl text-left hover:bg-blue-50/60 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              title="Ouvrir mon profil"
+            >
               <div className="flex-shrink-0">
                 <img 
                   className="h-10 w-10 rounded-xl ring-2 ring-blue-100 object-cover" 
@@ -276,7 +350,7 @@ export function Layout() {
                   alt="Avatar" 
                 />
               </div>
-              <div className="ml-3 truncate">
+              <div className="ml-3 min-w-0 truncate">
                 <p className="text-sm font-bold text-gray-900 truncate">
                   {user.prenom && user.nom ? `${user.prenom} ${user.nom}` : (user.displayName || user.email)}
                 </p>
@@ -284,7 +358,8 @@ export function Layout() {
                   <p className="text-xs font-semibold text-blue-600 truncate">{user.role}</p>
                 )}
               </div>
-            </div>
+              <UserCircle className="ml-auto h-4 w-4 flex-shrink-0 text-slate-400" />
+            </button>
 
             {/* Droit de contrôle auto-assigné */}
             <div className="bg-slate-50 border border-slate-100 p-2 rounded-lg">
@@ -366,6 +441,140 @@ export function Layout() {
           </div>
         </main>
       </div>
+
+      {profileOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="my-profile-title"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setProfileOpen(false);
+          }}
+        >
+          <section className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <header className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600">Mon espace personnel</p>
+                <h2 id="my-profile-title" className="mt-1 text-xl font-black text-slate-900">Mon profil</h2>
+                <p className="mt-1 text-sm text-slate-500">Consultez vos informations et gerez votre mot de passe.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProfileOpen(false)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Fermer mon profil"
+                title="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+
+            <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
+              <div className="rounded-xl bg-slate-50 p-4 sm:col-span-2">
+                <div className="flex items-center gap-3">
+                  <img
+                    className="h-12 w-12 rounded-xl ring-2 ring-blue-100 object-cover"
+                    src={user.photoURL || `https://ui-avatars.com/api/?name=${user.prenom || user.email}&background=0D8ABC&color=fff`}
+                    alt="Avatar du profil"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-base font-black text-slate-900">{user.prenom || ''} {user.nom || ''}</p>
+                    <p className="truncate text-sm text-blue-600">{user.role || 'Utilisateur'}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Identite</p>
+                <dl className="mt-3 space-y-2 text-sm text-slate-700">
+                  <div><dt className="inline font-semibold">Nom : </dt><dd className="inline">{user.nom || 'Non renseigne'}</dd></div>
+                  <div><dt className="inline font-semibold">Prenom : </dt><dd className="inline">{user.prenom || 'Non renseigne'}</dd></div>
+                  <div><dt className="inline font-semibold">Email : </dt><dd className="inline break-all">{user.email || 'Non renseigne'}</dd></div>
+                  <div><dt className="inline font-semibold">Telephone : </dt><dd className="inline">{user.telephone || 'Non renseigne'}</dd></div>
+                </dl>
+              </div>
+
+              <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-blue-500">Affectation et droits</p>
+                <dl className="mt-3 space-y-2 text-sm text-slate-700">
+                  <div><dt className="inline font-semibold">Role : </dt><dd className="inline">{user.role || 'Non renseigne'}</dd></div>
+                  <div><dt className="inline font-semibold">Arrondissement : </dt><dd className="inline">{user.arrondissement || 'Global'}</dd></div>
+                  <div><dt className="inline font-semibold">Etablissement : </dt><dd className="inline">{profileEstablishmentName || (user.etablissementId ? `ID ${user.etablissementId}` : 'Tous les etablissements')}</dd></div>
+                  <div><dt className="inline font-semibold">Droits : </dt><dd className="inline">{user.rights || 'Lecture et recherche'}</dd></div>
+                </dl>
+              </div>
+
+              <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 sm:col-span-2">
+                <div className="flex items-start gap-3">
+                  <KeyRound className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600" />
+                  <div>
+                    <p className="text-sm font-bold text-slate-800">Mot de passe et jeton de securite</p>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-600">Pour votre securite, le mot de passe actuel et le jeton existant ne sont jamais affiches. Le mot de passe est stocke sous forme de hash et le jeton est renouvelable.</p>
+                  </div>
+                </div>
+              </div>
+
+              <form onSubmit={handleProfilePasswordChange} className="rounded-xl border border-slate-200 p-4 sm:col-span-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Modifier mon mot de passe</p>
+                {profileError && <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{profileError}</p>}
+                {profileSuccess && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{profileSuccess}</p>}
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <label className="block text-xs font-semibold text-slate-600">
+                    Mot de passe actuel
+                    <input
+                      type="password"
+                      required
+                      value={currentPassword}
+                      onChange={(event) => setCurrentPassword(event.target.value)}
+                      autoComplete="current-password"
+                      className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-600">
+                    Nouveau mot de passe
+                    <span className="relative mt-1.5 block">
+                      <input
+                        type={showProfileNewPassword ? 'text' : 'password'}
+                        required
+                        value={profileNewPassword}
+                        onChange={(event) => setProfileNewPassword(event.target.value)}
+                        autoComplete="new-password"
+                        className="block w-full rounded-lg border border-slate-200 py-2.5 pl-3 pr-10 text-sm text-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button type="button" onClick={() => setShowProfileNewPassword((visible) => !visible)} className="absolute inset-y-0 right-0 inline-flex w-9 items-center justify-center text-slate-400 hover:text-blue-600" aria-label="Afficher ou masquer le nouveau mot de passe">
+                        {showProfileNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </span>
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-600">
+                    Confirmation
+                    <span className="relative mt-1.5 block">
+                      <input
+                        type={showProfilePasswordConfirmation ? 'text' : 'password'}
+                        required
+                        value={profilePasswordConfirmation}
+                        onChange={(event) => setProfilePasswordConfirmation(event.target.value)}
+                        autoComplete="new-password"
+                        className="block w-full rounded-lg border border-slate-200 py-2.5 pl-3 pr-10 text-sm text-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button type="button" onClick={() => setShowProfilePasswordConfirmation((visible) => !visible)} className="absolute inset-y-0 right-0 inline-flex w-9 items-center justify-center text-slate-400 hover:text-blue-600" aria-label="Afficher ou masquer la confirmation du mot de passe">
+                        {showProfilePasswordConfirmation ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </span>
+                  </label>
+                </div>
+                <p className="mt-2 text-[10px] text-slate-400">Minimum 8 caracteres avec une lettre, un chiffre et un caractere special.</p>
+                <button type="submit" disabled={profileSaving} className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50">
+                  <KeyRound className="h-4 w-4" />
+                  {profileSaving ? 'Modification en cours...' : 'Modifier le mot de passe'}
+                </button>
+              </form>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

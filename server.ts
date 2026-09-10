@@ -840,6 +840,60 @@ async function startServer() {
     }
   });
 
+  // Authenticated users can change their own password after confirming the current one.
+  app.post("/api/auth/change-password", requireAuth, async (req: AuthRequest, res) => {
+    if (!req.user) {
+      res.status(401).json({ error: "Session utilisateur introuvable." });
+      return;
+    }
+
+    try {
+      const { currentPassword, newPassword } = req.body;
+      const userQuery = req.user.id
+        ? db.select().from(users).where(eq(users.id, req.user.id))
+        : db.select().from(users).where(eq(users.email, req.user.email || ""));
+      const usersFound = await userQuery;
+      if (usersFound.length === 0) {
+        res.status(404).json({ error: "Utilisateur non trouve." });
+        return;
+      }
+
+      if (!currentPassword || !usersFound[0].passwordHash || !(await bcrypt.compare(currentPassword, usersFound[0].passwordHash))) {
+        res.status(400).json({ error: "Le mot de passe actuel est incorrect." });
+        return;
+      }
+
+      const passwordValidation = validatePasswordSecured(newPassword);
+      if (!passwordValidation.isValid) {
+        res.status(400).json({ error: passwordValidation.error });
+        return;
+      }
+      if (currentPassword === newPassword) {
+        res.status(400).json({ error: "Le nouveau mot de passe doit etre different de l'ancien." });
+        return;
+      }
+
+      const updated = await db.update(users).set({
+        passwordHash: await bcrypt.hash(newPassword, 10),
+        loginAttempts: 0,
+        isLocked: false,
+        lockExpiresAt: null
+      }).where(eq(users.id, usersFound[0].id)).returning();
+
+      await db.insert(auditLogs).values({
+        userId: usersFound[0].id,
+        action: "MODIFICATION_MOT_DE_PASSE_PERSONNEL",
+        entityType: "users",
+        entityId: usersFound[0].id,
+        details: { email: usersFound[0].email }
+      });
+
+      res.json({ success: true, user: publicUser(updated[0]) });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Simulated local emails for debugging/sandbox visualization
   app.get("/api/auth/simulated-emails", requireAuth, async (req: AuthRequest, res) => {
     try {
