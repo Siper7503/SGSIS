@@ -57,7 +57,7 @@ export default function Admin() {
   const canManageSecurity = isSuperAdmin;
 
   const rolesList = isSuperAdmin
-    ? [...ADMIN_MANAGED_ROLES]
+    ? [...SUPER_ADMIN_ROLES, ...ADMIN_MANAGED_ROLES]
     : isProviseur ? [ROLES.SECRETAIRE_ADMIN] : [...SCHOOL_USER_ROLES];
 
   useEffect(() => {
@@ -162,6 +162,42 @@ export default function Admin() {
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Erreur lors de la suppression.');
+      await fetchData();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeactivateSuperAdmin = async (userId: number) => {
+    if (!token || !confirm('Desactiver cet ancien compte SuperAdmin ? Son historique sera conserve.')) return;
+    try {
+      setActionLoading(userId);
+      const res = await apiFetch(`/api/users/${userId}/deactivate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Impossible de desactiver le compte.');
+      await fetchData();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleActivateSuperAdmin = async (userId: number) => {
+    if (!token) return;
+    try {
+      setActionLoading(userId);
+      const res = await apiFetch(`/api/users/${userId}/activate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Impossible de reactiver le compte.');
       await fetchData();
     } catch (e: any) {
       alert(e.message);
@@ -564,6 +600,29 @@ export default function Admin() {
                   
                   {/* Actions (Lock/Unlock) for authorized administrators */}
                   <div className="flex items-center gap-2">
+                    {isSuperAdmin && user?.email !== u.email && hasAnyRole(u.role, SUPER_ADMIN_ROLES) && (
+                      u.isActive === false ? (
+                        <button
+                          onClick={() => handleActivateSuperAdmin(u.id)}
+                          disabled={actionLoading === u.id}
+                          className="inline-flex items-center px-3.5 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-xs font-bold text-emerald-700 transition-colors disabled:opacity-50"
+                          title="Reactiver ce compte SuperAdmin"
+                        >
+                          <Unlock className="h-3.5 w-3.5 mr-1.5" />
+                          Reactiver
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleDeactivateSuperAdmin(u.id)}
+                          disabled={actionLoading === u.id}
+                          className="inline-flex items-center px-3.5 py-1.5 rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 text-xs font-bold text-amber-700 transition-colors disabled:opacity-50"
+                          title="Desactiver cet ancien compte dans le cadre d'une passation"
+                        >
+                          <Lock className="h-3.5 w-3.5 mr-1.5" />
+                          Desactiver (passation)
+                        </button>
+                      )
+                    )}
                     {user?.email !== u.email && !hasAnyRole(u.role, SUPER_ADMIN_ROLES) && (
                       canManageSecurity ? (
                         u.isLocked ? (

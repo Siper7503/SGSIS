@@ -2,6 +2,9 @@ import { Request, Response, NextFunction } from 'express';
 import { adminAuth } from '../lib/firebase-admin.ts';
 import { DecodedIdToken } from 'firebase-admin/auth';
 import { verifySession } from '../lib/auth-security.ts';
+import { db } from '../db/index.ts';
+import { users } from '../db/schema.ts';
+import { eq } from 'drizzle-orm';
 
 export interface AuthRequest extends Request {
   user?: DecodedIdToken & {
@@ -32,6 +35,13 @@ export const requireAuth = async (
   // Try verifying as custom JWT first
   try {
     const decoded = verifySession(token) as any;
+    if (decoded.id) {
+      const rows = await db.select({ isActive: users.isActive }).from(users).where(eq(users.id, decoded.id)).limit(1);
+      if (rows[0]?.isActive === false) {
+        res.status(403).json({ error: 'Ce compte a ete desactive. La session a ete revoquee.' });
+        return;
+      }
+    }
     req.user = decoded;
     next();
     return;

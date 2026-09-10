@@ -124,7 +124,7 @@ function canCreateUsers(role?: string | null): boolean {
 
 function canCreateTargetRole(managerRole: string | null | undefined, targetRole: string | null | undefined): boolean {
   if (hasAnyRole(managerRole, SUPER_ADMIN_ROLES)) {
-    return hasAnyRole(targetRole, ADMIN_MANAGED_ROLES);
+    return hasAnyRole(targetRole, [...ADMIN_MANAGED_ROLES, ...SUPER_ADMIN_ROLES]);
   }
 
   if (hasAnyRole(managerRole, DSE_ROLES)) {
@@ -239,6 +239,9 @@ function filterRowsForRequester(rows: any[], requester: AuthRequest["user"]): an
 async function ensureDatabaseShape() {
   await db.execute(sql`alter table users add column if not exists lock_expires_at timestamp`);
   await db.execute(sql`alter table users add column if not exists etablissement_id integer`);
+  await db.execute(sql`alter table users add column if not exists is_active boolean not null default true`);
+  await db.execute(sql`alter table users add column if not exists deactivated_at timestamp`);
+  await db.execute(sql`alter table users add column if not exists deactivated_by_id integer`);
   await db.execute(sql`alter table constructions add column if not exists etablissement_id integer references etablissements(id)`);
   await db.execute(sql`
     create table if not exists annual_reports (
@@ -522,6 +525,11 @@ async function startServer() {
       const now = new Date();
       let isSuccess = false;
 
+      if (user.isActive === false) {
+        res.status(403).json({ error: "Ce compte a ete desactive dans le cadre d'une passation de responsabilite. Contactez le SuperAdmin actuel." });
+        return;
+      }
+
       // 1. Vérifier si le compte est bloqué
       if (user.isLocked || user.loginAttempts >= maxAttempts) {
         const lockExpiresAt = user.lockExpiresAt ? new Date(user.lockExpiresAt) : null;
@@ -751,6 +759,11 @@ async function startServer() {
       }
 
       const user = usersFound[0];
+
+      if (user.isActive === false) {
+        res.status(403).json({ error: "Ce compte a ete desactive dans le cadre d'une passation de responsabilite." });
+        return;
+      }
 
       if (user.isLocked) {
         res.status(403).json({ error: "Ce compte est bloqué. Veuillez contacter l'administrateur." });
@@ -1170,6 +1183,108 @@ async function startServer() {
       simulatedEmails.unshift(simulatedEmail);
 
       res.json({ success: true, user: publicUser(createdUser[0]), simulatedEmail });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // SuperAdmin handover: keep the former account and deactivate it instead of deleting its history.
+  app.post("/api/users/:id/deactivate", requireAuth, async (req: AuthRequest, res) => {
+    if (!req.user || !hasAnyRole(req.user.role, SUPER_ADMIN_ROLES)) {
+      res.status(403).json({ error: "Acces refuse : seul le SuperAdmin peut desactiver un compte lors d'une passation." });
+      return;
+    }
+    try {
+      const targetId = Number(req.params.id);
+      if (!Number.isInteger(targetId)) {
+        res.status(400).json({ error: "ID de l'utilisateur invalide." });
+        return;
+      }
+      if (req.user.id === targetId) {
+        res.status(400).json({ error: "Le SuperAdmin ne peut pas desactiver son propre compte." });
+        return;
+      }
+
+      const targetRows = await db.select().from(users).where(eq(users.id, targetId));
+      if (targetRows.length === 0) {
+        res.status(404).json({ error: "Utilisateur introuvable." });
+        return;
+      }
+      const target = targetRows[0];
+      if (!hasAnyRole(target.role, SUPER_ADMIN_ROLES)) {
+        res.status(400).json({ error: "La passation concerne uniquement un compte SuperAdmin." });
+        return;
+      }
+
+      const activeSuperAdmins = await db.select({ id: users.id }).from(users).where(and(
+        eq(users.role, ROLES.SUPER_ADMIN),
+        eq(users.isActive, true)
+      ));
+      if (target.isActive !== false && activeSuperAdmins.length <= 1) {
+        res.status(409).json({ error: "Creez et validez d'abord le nouveau SuperAdmin avant de desactiver l'ancien compte." });
+        return;
+      }
+
+      const updated = await db.update(users).set({
+        isActive: false,
+        isLocked: true,
+        loginAttempts: 0,
+        lockExpiresAt: null,
+        otpCode: null,
+        otpExpiresAt: null,
+        deactivatedAt: new Date(),
+        deactivatedById: req.user.id || null
+      }).where(eq(users.id, targetId)).returning();
+
+      await db.insert(auditLogs).values({
+        userId: req.user.id || null,
+        action: "DESACTIVATION_SUPERADMIN_PASSATION",
+        entityType: "users",
+        entityId: targetId,
+        details: { email: target.email, replacedBy: req.user.email }
+      });
+
+      res.json({ success: true, user: publicUser(updated[0]), message: "Ancien compte SuperAdmin desactive. Son historique est conserve." });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/users/:id/activate", requireAuth, async (req: AuthRequest, res) => {
+    if (!req.user || !hasAnyRole(req.user.role, SUPER_ADMIN_ROLES)) {
+      res.status(403).json({ error: "Acces refuse : seul le SuperAdmin peut reactiver un compte." });
+      return;
+    }
+    try {
+      const targetId = Number(req.params.id);
+      const targetRows = await db.select().from(users).where(eq(users.id, targetId));
+      if (targetRows.length === 0) {
+        res.status(404).json({ error: "Utilisateur introuvable." });
+        return;
+      }
+      if (!hasAnyRole(targetRows[0].role, SUPER_ADMIN_ROLES)) {
+        res.status(400).json({ error: "Cette procedure concerne uniquement un compte SuperAdmin." });
+        return;
+      }
+
+      const updated = await db.update(users).set({
+        isActive: true,
+        isLocked: false,
+        loginAttempts: 0,
+        lockExpiresAt: null,
+        deactivatedAt: null,
+        deactivatedById: null
+      }).where(eq(users.id, targetId)).returning();
+
+      await db.insert(auditLogs).values({
+        userId: req.user.id || null,
+        action: "REACTIVATION_SUPERADMIN",
+        entityType: "users",
+        entityId: targetId,
+        details: { email: updated[0].email, reactivatedBy: req.user.email }
+      });
+
+      res.json({ success: true, user: publicUser(updated[0]) });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
