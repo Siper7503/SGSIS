@@ -303,7 +303,7 @@ export function Login() {
             <div className="min-w-0">
               <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">Commune de Ouagadougou</p>
               <h1 className="text-base font-black leading-tight text-slate-950 sm:text-xl">
-                Système de Gestion des Infrastructures Scolaires
+                Système de Gestion des Infrastructures Scolaires SGSIS
               </h1>
             </div>
           </div>
