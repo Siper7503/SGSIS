@@ -57,6 +57,7 @@ import {
   Cell
 } from 'recharts';
 import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
+import VisitorDashboard from './VisitorDashboard.tsx';
 import * as XLSX from 'xlsx';
 
 interface SchoolSummary {
@@ -481,6 +482,11 @@ export default function Dashboard() {
         return;
       }
 
+      if (hasAnyRole(user?.role, [ROLES.VISITEUR])) {
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
         const res = await apiFetch('/api/dashboard/stats', {
@@ -673,6 +679,12 @@ export default function Dashboard() {
         </div>
       </div>
     );
+  }
+
+  const isVisitor = hasAnyRole(user?.role, [ROLES.VISITEUR]);
+
+  if (isVisitor) {
+    return <VisitorDashboard />;
   }
 
   if (!isTechnicalSuperAdmin && (error || !stats)) {

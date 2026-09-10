@@ -50,6 +50,7 @@ export function Login() {
   const [telephone, setTelephone] = useState('');
   const [role, setRole] = useState<string>(ROLES.SUPER_ADMIN);
   const [arrondissement, setArrondissement] = useState('');
+  const [canCreateInitialSuperAdmin, setCanCreateInitialSuperAdmin] = useState(false);
 
   // 2FA verification step
   const [step, setStep] = useState<'credentials' | '2fa'>('credentials');
@@ -72,9 +73,26 @@ export function Login() {
   const [selectedEmail, setSelectedEmail] = useState<any | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
-  const rolesList = [
-    ROLES.SUPER_ADMIN
-  ];
+  const rolesList = canCreateInitialSuperAdmin
+    ? [ROLES.SUPER_ADMIN, ROLES.VISITEUR]
+    : [ROLES.VISITEUR];
+
+  const openRegistration = async () => {
+    setAuthMode('register');
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const response = await fetch('/api/auth/registration-status');
+      const status = await response.json();
+      const isFirstAccount = response.ok && !status.hasUsers;
+      setCanCreateInitialSuperAdmin(isFirstAccount);
+      setRole(isFirstAccount ? ROLES.SUPER_ADMIN : ROLES.VISITEUR);
+    } catch {
+      setCanCreateInitialSuperAdmin(false);
+      setRole(ROLES.VISITEUR);
+    }
+  };
 
   // Validate email in real-time as the user types
   useEffect(() => {
@@ -235,6 +253,10 @@ export function Login() {
         
         addSimulatedEmail(data.simulatedEmail);
         setSuccessMessage(`Félicitations, votre compte sécurisé a été créé ! Un jeton d'accès réutilisable (${data.accessToken}) vous a été envoyé par email. Veuillez vous connecter.`);
+        if (data.token && data.user) {
+          setSecureSession(data.token, data.user);
+          return;
+        }
         setAuthMode('login');
       }
     } catch (err: any) {
@@ -544,11 +566,7 @@ export function Login() {
                       <div className="flex items-center justify-between text-xs pt-1">
                         <button
                           type="button"
-                          onClick={() => {
-                            setAuthMode('register');
-                            setRole(ROLES.SUPER_ADMIN);
-                            setError(null);
-                          }}
+                          onClick={openRegistration}
                           className="font-bold text-cyan-700 hover:text-cyan-600 transition-colors"
                         >
                           Créer un compte d'accès
@@ -685,7 +703,7 @@ export function Login() {
                               <ShieldCheck className="h-3 w-3 mr-1 text-cyan-700" />
                               Droit attribué d'office : super administration, gestion des accès et audit global
                             </span>
-                          ) : role === "utilisateur lambda(visiteur)" ? (
+                          ) : role === ROLES.VISITEUR ? (
                             <span className="text-amber-700 font-semibold flex items-center">
                               <Info className="h-3 w-3 mr-1 text-amber-600" />
                               Droit attribué d'office : lecture et recherche uniquement

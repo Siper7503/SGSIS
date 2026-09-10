@@ -5,6 +5,7 @@
 
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './components/AuthProvider.tsx';
+import { useAuth } from './components/AuthProvider.tsx';
 import { AppErrorBoundary } from './components/AppErrorBoundary.tsx';
 import { Layout } from './components/Layout.tsx';
 import Dashboard from './pages/Dashboard.tsx';
@@ -23,6 +24,13 @@ import Wash from './pages/Wash.tsx';
 import Tice from './pages/Tice.tsx';
 import Audit from './pages/Audit.tsx';
 import RapportsAnnuels from './pages/RapportsAnnuels.tsx';
+import PublicAnnualReports from './pages/PublicAnnualReports.tsx';
+import { ROLES, hasAnyRole } from './lib/roles.ts';
+
+function AnnualReportsRoute() {
+  const { user } = useAuth();
+  return hasAnyRole(user?.role, [ROLES.VISITEUR]) ? <PublicAnnualReports /> : <RapportsAnnuels />;
+}
 
 
 export default function App() {
@@ -40,7 +48,7 @@ export default function App() {
             <Route path="constructions" element={<Constructions />} />
             <Route path="communications" element={<Communications />} />
             <Route path="rapports" element={<Rapports />} />
-            <Route path="rapports-annuels" element={<RapportsAnnuels />} />
+            <Route path="rapports-annuels" element={<AnnualReportsRoute />} />
             <Route path="carte" element={<Carte />} />
             <Route path="predictions" element={<Predictions />} />
             <Route path="maintenance" element={<Maintenance />} />

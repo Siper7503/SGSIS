@@ -212,6 +212,9 @@ function filterUsersForRequester(allUsers: any[], requester: AuthRequest["user"]
 }
 
 function filterEstablishmentsForRequester(allEstablishments: any[], requester: AuthRequest["user"]): any[] {
+  if (hasAnyRole(requester?.role, [ROLES.VISITEUR])) {
+    return allEstablishments.filter((etablissement) => !etablissement.archived);
+  }
   if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) return allEstablishments;
   if (hasAnyRole(requester?.role, ARRONDISSEMENT_ROLES)) {
     return allEstablishments.filter((etablissement) => etablissement.arrondissement === requester?.arrondissement);
@@ -346,6 +349,15 @@ async function startServer() {
     }
   });
 
+  app.get("/api/auth/registration-status", async (_req, res) => {
+    try {
+      const existingUsers = await db.select({ id: users.id }).from(users).limit(1);
+      res.json({ hasUsers: existingUsers.length > 0, visitorRegistrationEnabled: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Upgraded secure user registration endpoint
   app.post("/api/auth/register-secure", async (req, res) => {
     try {
@@ -382,58 +394,56 @@ async function startServer() {
         return;
       }
 
-      // 4. Automatic "Droit de contrôle" (Pilotage / Lecture-Ecriture / Lecture-Recherche)
-      const rights = rightsForRole(role);
-
       // 5. Automatic Secure Token Code generation
       const accessToken = createOneTimeToken();
 
       const existingUsers = await db.select().from(users).where(eq(users.email, email));
       const allSystemUsers = await db.select().from(users);
+      const isFirstAccount = allSystemUsers.length === 0;
+      const requestedVisitor = hasAnyRole(role, [ROLES.VISITEUR]);
+      const requestedSuperAdmin = hasAnyRole(role, SUPER_ADMIN_ROLES);
 
-      if (allSystemUsers.length > 0) {
-        res.status(403).json({ error: "Inscription publique fermee. Les comptes doivent etre crees par le SuperAdmin ou le Directeur DSE." });
+      if (!requestedVisitor && !requestedSuperAdmin) {
+        res.status(403).json({ error: "L'inscription publique est reservee au profil visiteur." });
         return;
       }
 
-      if (!hasAnyRole(role, SUPER_ADMIN_ROLES)) {
+      if (isFirstAccount && !requestedSuperAdmin) {
         res.status(403).json({ error: "Le premier compte doit etre le SuperAdmin de l'application." });
         return;
       }
 
+      if (!isFirstAccount && requestedSuperAdmin) {
+        res.status(403).json({ error: "Le SuperAdmin initial existe deja. Utilisez le profil visiteur ou demandez la creation d'un compte a un administrateur." });
+        return;
+      }
+
+      if (existingUsers.length > 0) {
+        res.status(409).json({ error: "Un compte existe deja avec cette adresse email." });
+        return;
+      }
+
+      const effectiveRole = requestedSuperAdmin ? ROLES.SUPER_ADMIN : ROLES.VISITEUR;
+      const rights = rightsForRole(effectiveRole);
+
       const hash = await bcrypt.hash(password, 10);
 
-      let userResult;
-      if (existingUsers.length > 0) {
-        userResult = await db.update(users).set({
-          nom,
-          prenom,
-          telephone: cleanPhone,
-          passwordHash: hash,
-          role,
-          rights,
-          accessToken: hashSecret(accessToken),
-          arrondissement: arrondissement || null,
-          lockExpiresAt: null,
-        }).where(eq(users.email, email)).returning();
-      } else {
-        const uid = "custom_" + Math.random().toString(36).substring(2, 15);
-        userResult = await db.insert(users).values({
-          uid,
-          email,
-          nom,
-          prenom,
-          telephone: cleanPhone,
-          role,
-          rights,
-          accessToken: hashSecret(accessToken),
-          arrondissement: arrondissement || null,
-          passwordHash: hash,
-          loginAttempts: 0,
-          isLocked: false,
-          lockExpiresAt: null
-        }).returning();
-      }
+      const uid = "custom_" + Math.random().toString(36).substring(2, 15);
+      const userResult = await db.insert(users).values({
+        uid,
+        email,
+        nom,
+        prenom,
+        telephone: cleanPhone,
+        role: effectiveRole,
+        rights,
+        accessToken: hashSecret(accessToken),
+        arrondissement: effectiveRole === ROLES.VISITEUR ? null : (arrondissement || null),
+        passwordHash: hash,
+        loginAttempts: 0,
+        isLocked: false,
+        lockExpiresAt: null
+      }).returning();
 
       // 6. Log registration in audit log
       await db.insert(auditLogs).values({
@@ -441,7 +451,7 @@ async function startServer() {
         action: "INSCRIPTION_SECURE",
         entityType: "users",
         entityId: userResult[0].id,
-        details: { email, role, rights }
+        details: { email, role: effectiveRole, rights }
       });
 
       // 7. Simuler l'envoi du jeton par email
@@ -457,11 +467,25 @@ async function startServer() {
       };
       simulatedEmails.unshift(simulatedEmail);
 
+      const sessionToken = signSession({
+        id: userResult[0].id,
+        uid: userResult[0].uid,
+        email: userResult[0].email,
+        role: userResult[0].role,
+        etablissementId: userResult[0].etablissementId,
+        arrondissement: userResult[0].arrondissement,
+        nom: userResult[0].nom,
+        prenom: userResult[0].prenom,
+        telephone: userResult[0].telephone,
+        rights: userResult[0].rights
+      });
+
       res.json({ 
         success: true, 
         user: publicUser(userResult[0]),
         rights,
         accessToken,
+        token: sessionToken,
         simulatedEmail,
         message: "Compte créé avec succès ! Votre jeton d'accès sécurisé a été généré automatiquement et envoyé par email." 
       });
@@ -2706,7 +2730,7 @@ async function startServer() {
 
   // Annual school reports: structured data with a secondary-school approval workflow.
   app.get("/api/annual-reports", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...ARRONDISSEMENT_ROLES, ...LOCAL_SCHOOL_ROLES], "Acces refuse : vous n'avez pas acces aux rapports annuels.")) return;
+    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...ARRONDISSEMENT_ROLES, ...LOCAL_SCHOOL_ROLES, ROLES.VISITEUR], "Acces refuse : vous n'avez pas acces aux rapports annuels.")) return;
     try {
       const reports = await db.select({
         report: annualReports,
@@ -2714,6 +2738,7 @@ async function startServer() {
       }).from(annualReports).leftJoin(etablissements, eq(annualReports.etablissementId, etablissements.id));
 
       const visible = reports.filter((row) => {
+        if (hasAnyRole(req.user?.role, [ROLES.VISITEUR])) return row.report.statut === "Valide";
         if (hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) return true;
         if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)) return Boolean(row.etablissement?.arrondissement === req.user?.arrondissement);
         return Boolean(req.user?.etablissementId && row.report.etablissementId === req.user.etablissementId);
@@ -3267,6 +3292,10 @@ async function startServer() {
   // API route for complete dashboard statistics
   app.get("/api/dashboard/stats", requireAuth, async (req: AuthRequest, res) => {
     try {
+      if (hasAnyRole(req.user?.role, [ROLES.VISITEUR])) {
+        res.status(403).json({ error: "Le profil visiteur dispose uniquement de la consultation des etablissements et des rapports valides." });
+        return;
+      }
       const etabs = await db.select().from(etablissements);
       const infras = await db.select().from(infrastructures);
       const effs = await db.select().from(effectifs);

@@ -162,6 +162,26 @@ export function Layout() {
   const isDseAdmin = hasAnyRole(role, DSE_ROLES);
   const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
   const isArrondissementResp = hasAnyRole(role, ARRONDISSEMENT_ROLES);
+  const isVisitor = hasAnyRole(role, [ROLES.VISITEUR]);
+
+  if (isVisitor && !['/', '/etablissements', '/rapports-annuels'].includes(currentPath)) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
+        <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
+          <div className="h-12 w-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Eye className="h-6 w-6" />
+          </div>
+          <h2 className="text-lg font-bold text-gray-900">Acces en lecture seule</h2>
+          <p className="text-sm text-gray-500 mt-2">Votre profil permet uniquement de consulter et rechercher les etablissements ainsi que les rapports annuels valides.</p>
+          <div className="mt-6">
+            <Link to="/" className="inline-flex items-center justify-center rounded-xl bg-blue-600 text-white px-4 py-2 text-sm font-bold shadow-sm hover:bg-blue-700 transition">
+              Retour au tableau de bord
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (isLocalActor && !(hasAnyRole(role, [ROLES.PROVISEUR]) && currentPath === '/admin') && !['/', '/etablissements', '/effectifs', '/communications', '/infrastructures', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/rapports-annuels'].includes(currentPath)) {
     return (
@@ -275,6 +295,7 @@ export function Layout() {
     const isDse = hasAnyRole(userRole, DSE_ROLES);
     const isLocal = hasAnyRole(userRole, LOCAL_SCHOOL_ROLES);
     const isArrondissementResp = hasAnyRole(userRole, ARRONDISSEMENT_ROLES);
+    const isVisitor = hasAnyRole(userRole, [ROLES.VISITEUR]);
 
     // Filter navigation based on role privileges
     const filteredNavigation = navigation.filter((item) => {
@@ -290,6 +311,9 @@ export function Layout() {
       }
       if (isArrondissementResp) {
         return ['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/carte', '/rapports', '/rapports-annuels'].includes(item.href);
+      }
+      if (isVisitor) {
+        return ['/', '/etablissements', '/rapports-annuels'].includes(item.href);
       }
       // Interface 3 (Observer/Lambda) sees everything except Admin (M8), Audit logs and predictions
       return !['/admin', '/audit', '/predictions'].includes(item.href);
