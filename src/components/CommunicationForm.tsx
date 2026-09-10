@@ -16,7 +16,7 @@ export function CommunicationForm({ onSuccess, onCancel }: CommunicationFormProp
   const [formData, setFormData] = useState({
     titre: '',
     contenu: '',
-    ciblage: 'Tous les établissements',
+    ciblage: 'all',
     delaiHeures: '24',
   });
 
@@ -82,11 +82,11 @@ export function CommunicationForm({ onSuccess, onCancel }: CommunicationFormProp
               onChange={handleChange}
               className="mt-1 block w-full rounded-md border-gray-300 border p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
             >
-              <option value="Tous les établissements">Tous les établissements</option>
-              <option value="Écoles Primaires Uniquement">Écoles Primaires Uniquement</option>
-              <option value="Lycées et Collèges Uniquement">Lycées et Collèges Uniquement</option>
+              <option value="all">Tous les établissements</option>
+              <option value="primary">Écoles primaires uniquement</option>
+              <option value="secondary">Lycées et collèges uniquement</option>
               {Array.from({ length: 12 }, (_, i) => (
-                <option key={i + 1} value={`Arrondissement ${i + 1}`}>
+                <option key={i + 1} value={`arrondissement:${i + 1}`}>
                   Arrondissement {i + 1}
                 </option>
               ))}

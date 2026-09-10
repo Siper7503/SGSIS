@@ -20,11 +20,13 @@ import {
   Smartphone
 } from 'lucide-react';
 import { CommunicationForm } from '../components/CommunicationForm.tsx';
+import { DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Communications() {
   const { token, user } = useAuth();
-  const isDSE = user?.role === 'Directeur DSE' || user?.role === 'Administrateur DSE';
-  const isObserver = !isDSE && !["Proviseur d'établissement", "Sécretaire Adminstratif", "Directeurs d'école"].includes(user?.role || "");
+  const isDSE = hasAnyRole(user?.role, DSE_ROLES);
+  const isSchoolRecipient = hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
+  const isObserver = !isDSE && !isSchoolRecipient;
 
   // State for DSE Director
   const [comms, setComms] = useState<any[]>([]);

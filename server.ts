@@ -2310,6 +2310,16 @@ async function startServer() {
     }
   });
 
+  const resolveCommunicationTarget = (value: unknown) => {
+    const raw = String(value || '').trim();
+    const normalized = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (raw === 'primary' || normalized.includes('ecoles primaires')) return { kind: 'primary' as const };
+    if (raw === 'secondary' || normalized.includes('lycees et colleges')) return { kind: 'secondary' as const };
+    if (raw.startsWith('arrondissement:')) return { kind: 'arrondissement' as const, arrondissement: `Arrondissement ${raw.split(':')[1]}` };
+    if (normalized.startsWith('arrondissement ')) return { kind: 'arrondissement' as const, arrondissement: raw };
+    return { kind: 'all' as const };
+  };
+
   // M6: Communications
   app.get("/api/communications", requireAuth, async (req: AuthRequest, res) => {
     try {
@@ -2319,9 +2329,10 @@ async function startServer() {
         return;
       }
       if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)) {
-        res.json(results.filter((communication) =>
-          communication.ciblage === "Tous les établissements" || communication.ciblage === req.user?.arrondissement
-        ));
+        res.json(results.filter((communication) => {
+          const target = resolveCommunicationTarget(communication.ciblage);
+          return target.kind === 'all' || (target.kind === 'arrondissement' && target.arrondissement === req.user?.arrondissement);
+        }));
         return;
       }
       res.json([]);
@@ -2385,10 +2396,18 @@ async function startServer() {
 
       const limitHours = parseInt(delaiHeures) || 24;
       
+      const target = resolveCommunicationTarget(ciblage);
+      const targetLabel = target.kind === 'all'
+        ? 'Tous les établissements'
+        : target.kind === 'primary'
+          ? 'Écoles primaires uniquement'
+          : target.kind === 'secondary'
+            ? 'Lycées et collèges uniquement'
+            : target.arrondissement;
       const inserted = await db.insert(communications).values({
         titre,
         contenu,
-        ciblage: ciblage || "Tous les établissements",
+        ciblage: targetLabel,
         delaiHeures: limitHours
       }).returning();
 
@@ -2397,32 +2416,16 @@ async function startServer() {
       // RESOLUTION OF TARGETED RECIPIENTS (SF-23 / SF-26)
       // Get all school directors (role = Directeur / Proviseur)
       const allUsers = await db.select().from(users);
-      const allDirectors = allUsers.filter((user) => hasAnyRole(user.role, LOCAL_SCHOOL_ROLES));
-      let targetUsers = allDirectors;
-
-      const targetStr = ciblage || "Tous les établissements";
-
-      if (targetStr !== "Tous les établissements") {
-        if (targetStr.startsWith("Arrondissement")) {
-          // Filter by specific Arrondissement
-          targetUsers = allDirectors.filter(u => u.arrondissement === targetStr);
-        } else if (targetStr === "Écoles Primaires Uniquement") {
-          // Find primary schools and match their arrondissements/profiles
-          const primarySchools = await db.select().from(etablissements).where(eq(etablissements.type, "Primaire"));
-          const primaryArrondissements = new Set(primarySchools.map(s => s.arrondissement));
-          targetUsers = allDirectors.filter(u => u.arrondissement && primaryArrondissements.has(u.arrondissement));
-        } else if (targetStr === "Lycées et Collèges Uniquement") {
-          // Find secondary schools
-          const secondarySchools = await db.select().from(etablissements).where(eq(etablissements.type, "Secondaire"));
-          const secondaryArrondissements = new Set(secondarySchools.map(s => s.arrondissement));
-          targetUsers = allDirectors.filter(u => u.arrondissement && secondaryArrondissements.has(u.arrondissement));
-        }
-      }
-
-      // If no users were matched, add some test recipients so the system isn't empty during demos
-      if (targetUsers.length === 0 && allDirectors.length > 0) {
-        targetUsers = [allDirectors[0]];
-      }
+      const allEstablishments = await db.select().from(etablissements);
+      const establishmentById = new Map(allEstablishments.map((etablissement) => [etablissement.id, etablissement]));
+      const allSchoolUsers = allUsers.filter((user) => hasAnyRole(user.role, LOCAL_SCHOOL_ROLES));
+      const targetUsers = allSchoolUsers.filter((schoolUser) => {
+        const establishment = schoolUser.etablissementId ? establishmentById.get(schoolUser.etablissementId) : undefined;
+        if (!establishment) return false;
+        if (target.kind === 'all') return true;
+        if (target.kind === 'arrondissement') return establishment?.arrondissement === target.arrondissement || schoolUser.arrondissement === target.arrondissement;
+        return establishment?.type === (target.kind === 'primary' ? 'Primaire' : 'Secondaire');
+      });
 
       // PARALLEL DOUBLE-CHANNEL DISPATCH (SF-26)
       // For each resolved recipient, insert a receipt record representing in-app + SMS dispatch timestamps
@@ -2442,7 +2445,7 @@ async function startServer() {
         "DIFFUSION_COMMUNICATION",
         "communications",
         communicationId,
-        { titre, ciblage: targetStr, targetCount: targetUsers.length, delaiHeures: limitHours }
+        { titre, ciblage: targetLabel, targetCount: targetUsers.length, delaiHeures: limitHours }
       );
       
       res.json({
