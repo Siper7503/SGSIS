@@ -5,6 +5,7 @@ import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN
 import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Check, Download, FileSpreadsheet, FileText, Save, Send, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { DEFAULT_SCHOOL_YEAR, SCHOOL_YEARS } from '../lib/schoolYears.ts';
 
 const CLASS_LEVELS = ['6e', '5e', '4e', '3e', '2ndeA', '2ndeC', '1ereA', '1ereD', 'TleA', 'TleD'];
 const CYCLE_LEVELS = ['6e', '5e', '4e', '3e'];
@@ -105,7 +106,7 @@ export default function RapportsAnnuels() {
   const [etablissements, setEtablissements] = useState<any[]>([]);
   const [reports, setReports] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState('');
-  const [anneeScolaire, setAnneeScolaire] = useState('2025-2026');
+  const [anneeScolaire, setAnneeScolaire] = useState(DEFAULT_SCHOOL_YEAR);
   const [donnees, setDonnees] = useState<any>(emptyReport('Primaire'));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -241,7 +242,7 @@ export default function RapportsAnnuels() {
       <fieldset disabled={!canEdit} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
         <div className="grid gap-4 md:grid-cols-3">
           <label className="text-xs font-bold text-slate-600">Annee scolaire
-            <select value={anneeScolaire} onChange={(event) => setAnneeScolaire(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 p-2 text-sm"><option>2025-2026</option><option>2026-2027</option><option>2024-2025</option></select>
+            <select value={anneeScolaire} onChange={(event) => setAnneeScolaire(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 p-2 text-sm">{SCHOOL_YEARS.map((schoolYear) => <option key={schoolYear} value={schoolYear}>{schoolYear}</option>)}</select>
           </label>
           <label className="text-xs font-bold text-slate-600">Etablissement
             <select value={selectedId} disabled={!isDse && !isSuperAdmin} onChange={(event) => setSelectedId(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 p-2 text-sm disabled:bg-slate-100"><option value="">Selectionner</option>{etablissements.map((etab) => <option key={etab.id} value={etab.id}>{etab.nom} - {etab.arrondissement}</option>)}</select>

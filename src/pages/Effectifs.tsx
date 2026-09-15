@@ -3,8 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../components/AuthProvider.tsx';
 import { Users, Edit2, Search } from 'lucide-react';
 import { EffectifsForm } from '../components/EffectifsForm.tsx';
-import { ModuleWorkflowActions } from '../components/ModuleWorkflowActions.tsx';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Effectifs() {
   const [effectifs, setEffectifs] = useState<any[]>([]);
@@ -13,8 +12,7 @@ export default function Effectifs() {
   const [editingEtablissement, setEditingEtablissement] = useState<any>(null);
   const { token, user } = useAuth();
   const userRole = user?.role;
-  const canWrite = hasAnyRole(userRole, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES]);
-  const canReview = hasAnyRole(userRole, ARRONDISSEMENT_ROLES);
+  const canWrite = hasAnyRole(userRole, [ROLES.DIRECTEUR_ECOLE, ROLES.PROVISEUR]);
 
   const fetchData = async () => {
     if (!token) return;
@@ -103,7 +101,7 @@ export default function Effectifs() {
                     <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
                       Personnel (Ens/Adm)
                     </th>
-                    {(canWrite || canReview) && (
+                    {canWrite && (
                       <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
                         <span className="sr-only">Actions</span>
                       </th>
@@ -113,19 +111,19 @@ export default function Effectifs() {
                 <tbody className="divide-y divide-gray-200 bg-white">
                   {loading ? (
                     <tr>
-                      <td colSpan={canWrite || canReview ? 5 : 4} className="py-10 text-center text-sm text-gray-500">
+                      <td colSpan={canWrite ? 5 : 4} className="py-10 text-center text-sm text-gray-500">
                         Chargement des effectifs...
                       </td>
                     </tr>
                   ) : filteredData.length === 0 ? (
                     <tr>
-                      <td colSpan={canWrite || canReview ? 5 : 4} className="py-10 text-center text-sm text-gray-500">
+                      <td colSpan={canWrite ? 5 : 4} className="py-10 text-center text-sm text-gray-500">
                         Aucun établissement trouvé.
                       </td>
                     </tr>
                   ) : (
                     filteredData.map((item) => (
-                      <tr key={item.etablissementId}>
+                      <tr key={item.id ? `${item.etablissementId}-${item.id}` : `empty-${item.etablissementId}`}>
                         <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6">
                           <div className="font-medium text-gray-900">{item.nomEtablissement}</div>
                           <div className="text-gray-500">{item.typeEtablissement} - {item.arrondissement}</div>
@@ -160,7 +158,7 @@ export default function Effectifs() {
                             <span className="text-gray-400 italic">-</span>
                           )}
                         </td>
-                        {(canWrite || canReview) && (
+                        {canWrite && (
                           <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
                             {canWrite && <button
                               onClick={() => setEditingEtablissement(item)}
@@ -169,7 +167,6 @@ export default function Effectifs() {
                               <Edit2 className="h-4 w-4 mr-1" />
                               {item.id ? 'Éditer' : 'Saisir'}
                             </button>}
-                            <ModuleWorkflowActions module="effectifs" recordId={item.id} workflowStatus={item.workflowStatus} onUpdated={fetchData} compact />
                           </td>
                         )}
                       </tr>

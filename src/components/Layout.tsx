@@ -232,9 +232,9 @@ export function Layout() {
           <div className="h-12 w-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
             <ShieldAlert className="h-6 w-6" />
           </div>
-          <h2 className="text-lg font-bold text-gray-900">AccÃ¨s RÃ©servÃ©</h2>
+          <h2 className="text-lg font-bold text-gray-900">Accès Réservé</h2>
           <p className="text-sm text-gray-500 mt-2">
-            Le module <code>{currentPath}</code> est rÃ©servÃ© au Directeur DSE et au SuperAdmin.
+            Le module <code>{currentPath}</code> est réservé au Directeur DSE et au SuperAdmin.
           </p>
           <div className="mt-6">
             <Link to="/" className="inline-flex items-center justify-center rounded-xl bg-blue-600 text-white px-4 py-2 text-sm font-bold shadow-sm hover:bg-blue-700 transition">
@@ -253,9 +253,9 @@ export function Layout() {
           <div className="h-12 w-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
             <ShieldAlert className="h-6 w-6" />
           </div>
-          <h2 className="text-lg font-bold text-gray-900">AccÃ¨s RÃ©servÃ©</h2>
+          <h2 className="text-lg font-bold text-gray-900">Accès Réservé</h2>
           <p className="text-sm text-gray-500 mt-2">
-            Le journal d'audit global est rÃ©servÃ© au SuperAdmin.
+            Le journal d'audit global est réservé au SuperAdmin.
           </p>
           <div className="mt-6">
             <Link to="/" className="inline-flex items-center justify-center rounded-xl bg-blue-600 text-white px-4 py-2 text-sm font-bold shadow-sm hover:bg-blue-700 transition">

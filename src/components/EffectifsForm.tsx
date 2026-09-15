@@ -2,6 +2,7 @@ import { apiFetch } from "../lib/api.ts";
 import React, { useState } from 'react';
 import { useAuth } from './AuthProvider.tsx';
 import { Save } from 'lucide-react';
+import { DEFAULT_SCHOOL_YEAR, SCHOOL_YEARS } from '../lib/schoolYears.ts';
 
 interface EffectifsFormProps {
   etablissement: any;
@@ -16,7 +17,7 @@ export function EffectifsForm({ etablissement, onSuccess, onCancel }: EffectifsF
 
   const [formData, setFormData] = useState({
     etablissementId: etablissement.etablissementId,
-    anneeScolaire: etablissement.anneeScolaire || '2024-2025',
+    anneeScolaire: etablissement.anneeScolaire || DEFAULT_SCHOOL_YEAR,
     elevesFilles: etablissement.elevesFilles || 0,
     elevesGarcons: etablissement.elevesGarcons || 0,
     enseignants: etablissement.enseignants || 0,
@@ -86,9 +87,9 @@ export function EffectifsForm({ etablissement, onSuccess, onCancel }: EffectifsF
               className="mt-1 block w-full rounded-md border-gray-300 border p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
               required
             >
-              <option value="2023-2024">2023-2024</option>
-              <option value="2024-2025">2024-2025</option>
-              <option value="2025-2026">2025-2026</option>
+              {SCHOOL_YEARS.map((schoolYear) => (
+                <option key={schoolYear} value={schoolYear}>{schoolYear}</option>
+              ))}
             </select>
           </div>
           

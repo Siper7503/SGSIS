@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FileText, Search, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../components/AuthProvider.tsx';
 import { apiFetch } from '../lib/api.ts';
+import { SCHOOL_YEARS } from '../lib/schoolYears.ts';
 
 function sumCycle(cycle: any) {
   return (Object.values(cycle || {}) as any[]).reduce((total: number, value: any) => total + Number(value?.filles || 0) + Number(value?.garcons || 0), 0);
@@ -43,7 +44,6 @@ export default function PublicAnnualReports() {
     }).catch((loadError: any) => setError(loadError.message || 'Erreur de chargement.')).finally(() => setLoading(false));
   }, [token]);
 
-  const years = useMemo(() => Array.from(new Set(reports.map((row) => row.report.anneeScolaire).filter(Boolean))).sort().reverse(), [reports]);
   const filteredReports = reports.filter((row) => {
     const establishment = row.etablissement;
     const matchesSearch = !search.trim() || String(establishment?.nom || '').toLowerCase().includes(search.trim().toLowerCase());
@@ -63,7 +63,7 @@ export default function PublicAnnualReports() {
         <div className="grid gap-3 md:grid-cols-3">
           <label className="relative block"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher un etablissement..." className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500" /></label>
           <select value={etablissementId} onChange={(event) => setEtablissementId(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500"><option value="Tous">Tous les etablissements</option>{etablissements.map((item) => <option key={item.id} value={item.id}>{item.nom}</option>)}</select>
-          <select value={annee} onChange={(event) => setAnnee(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500"><option value="Toutes">Toutes les annees</option>{years.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+          <select value={annee} onChange={(event) => setAnnee(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500"><option value="Toutes">Toutes les annees</option>{SCHOOL_YEARS.map((schoolYear) => <option key={schoolYear} value={schoolYear}>{schoolYear}</option>)}</select>
         </div>
       </section>
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

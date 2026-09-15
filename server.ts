@@ -17,6 +17,7 @@ import { createOneTimeToken, hashSecret, secretsMatch, signSession } from "./src
 import { ADMIN_MANAGED_ROLES, ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SCHOOL_USER_ROLES, SCHOOL_WRITE_ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from "./src/lib/roles.ts";
 import { createFacilitiesRouter } from "./src/server/routes/facilities.ts";
 import { attachModuleWorkflow, saveModuleWorkflow, isSchoolDataWriter } from "./src/server/module-workflow.ts";
+import { DEFAULT_SCHOOL_YEAR, isValidSchoolYear } from "./src/lib/schoolYears.ts";
 
 interface SimulatedEmail {
   id: string;
@@ -2067,7 +2068,6 @@ async function startServer() {
         conformite
       } = req.body;
       const workflowAction = req.body.workflowAction === 'save' ? 'save' : 'submit';
-
       if (!etablissementId) {
         res.status(400).json({ error: "L'ID de l'établissement est requis." });
         return;
@@ -2160,16 +2160,27 @@ async function startServer() {
     try {
       const { etablissementId, anneeScolaire, elevesFilles, elevesGarcons, enseignants, personnelsAdmin } = req.body;
       const workflowAction = req.body.workflowAction === 'save' ? 'save' : 'submit';
+      if (!hasAnyRole(req.user?.role, [ROLES.DIRECTEUR_ECOLE, ROLES.PROVISEUR])) {
+        res.status(403).json({ error: "Acces refuse : seuls le Directeur d'ecole et le Proviseur peuvent renseigner les effectifs." });
+        return;
+      }
+      if (!isValidSchoolYear(anneeScolaire)) {
+        res.status(400).json({ error: "L'annee scolaire doit etre comprise entre 2020-2021 et 2099-2100." });
+        return;
+      }
       if (!etablissementId || !anneeScolaire) {
         res.status(400).json({ error: "L'ID de l'établissement et l'année scolaire sont requis." });
         return;
       }
-      if (hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES) && Number(etablissementId) !== req.user?.etablissementId) {
+      if (Number(etablissementId) !== req.user?.etablissementId) {
         res.status(403).json({ error: "Vous ne pouvez modifier que les effectifs de votre etablissement." });
         return;
       }
       const existing = await db.select().from(effectifs).where(
-        eq(effectifs.etablissementId, etablissementId)
+        and(
+          eq(effectifs.etablissementId, Number(etablissementId)),
+          eq(effectifs.anneeScolaire, String(anneeScolaire))
+        )
       ).limit(1);
 
       let savedEffectifs;
@@ -2869,6 +2880,10 @@ async function startServer() {
     try {
       const { etablissementId, anneeScolaire, donnees, action = "save" } = req.body;
       const targetId = Number(etablissementId);
+      if (!isValidSchoolYear(String(anneeScolaire))) {
+        res.status(400).json({ error: "L'annee scolaire doit etre comprise entre 2020-2021 et 2099-2100." });
+        return;
+      }
       if (!targetId || !anneeScolaire || !donnees || typeof donnees !== "object") {
         res.status(400).json({ error: "L'etablissement, l'annee scolaire et les donnees sont obligatoires." });
         return;
@@ -2998,6 +3013,10 @@ async function startServer() {
   app.post("/api/module-submissions/:module/:recordId/decision", requireAuth, async (req: AuthRequest, res) => {
     if (!req.user || !hasAnyRole(req.user.role, [...DSE_ROLES, ...ARRONDISSEMENT_ROLES, ROLES.PROVISEUR])) {
       res.status(403).json({ error: "Acces refuse : ce circuit de validation est reserve aux profils metier habilites." });
+      return;
+    }
+    if (req.params.module === 'effectifs' && hasAnyRole(req.user.role, [...DSE_ROLES, ...ARRONDISSEMENT_ROLES])) {
+      res.status(403).json({ error: "Le module Effectifs est en lecture seule pour les administrateurs." });
       return;
     }
     try {
@@ -3576,7 +3595,7 @@ async function startServer() {
       const latestSchoolYear = filteredEffs
         .map(ef => ef.anneeScolaire)
         .filter((year): year is string => Boolean(year))
-        .sort((a, b) => b.localeCompare(a))[0] || "2025-2026";
+        .sort((a, b) => b.localeCompare(a))[0] || DEFAULT_SCHOOL_YEAR;
 
       const latestEffs = filteredEffs.filter(ef => ef.anneeScolaire === latestSchoolYear);
       const latestEffByEtab = new Map<number, typeof filteredEffs[number]>();
