@@ -278,11 +278,16 @@ export function Login() {
 
   const addSimulatedEmail = (message: any) => {
     if (!message) return;
+    const normalizedMessage = {
+      ...message,
+      subject: String(message.subject || '').replace(/SGSIED/g, 'SGSIS-CO'),
+      body: String(message.body || '').replace(/SGSIED/g, 'SGSIS-CO')
+    };
     setSimulatedEmails((items) => [
-      message,
-      ...items.filter((item) => item.id !== message.id)
+      normalizedMessage,
+      ...items.filter((item) => item.id !== normalizedMessage.id)
     ]);
-    setSelectedEmail(message);
+    setSelectedEmail(normalizedMessage);
   };
 
   const handleBackToLogin = () => {

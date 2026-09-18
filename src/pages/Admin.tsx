@@ -238,7 +238,11 @@ export default function Admin() {
       }
 
       if (!editingUserId && d.simulatedEmail) {
-        setSimulatedEmail(d.simulatedEmail);
+        setSimulatedEmail({
+          ...d.simulatedEmail,
+          subject: String(d.simulatedEmail.subject || '').replace(/SGSIED/g, 'SGSIS-CO'),
+          body: String(d.simulatedEmail.body || '').replace(/SGSIED/g, 'SGSIS-CO')
+        });
         setCopiedToken(false);
       }
 
