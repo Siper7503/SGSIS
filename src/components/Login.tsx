@@ -553,7 +553,7 @@ export function Login() {
                               value={accessToken}
                               onChange={(e) => setAccessToken(e.target.value)}
                               className="block w-full rounded-lg border border-amber-200 bg-amber-50/5 py-3 pl-10 pr-3 text-slate-950 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-600 sm:text-sm font-mono font-bold"
-                              placeholder="Ex: SGSIED-XYZ123-456"
+                              placeholder="Ex: SGSIS-CO-XYZ123-456"
                             />
                           </div>
                           <p className="mt-1 text-[10px] text-slate-400 flex items-center">
@@ -837,7 +837,7 @@ export function Login() {
               ) : (
                 simulatedEmails.map((item) => {
                   // Attempt to extract token or OTP code from body if present
-                  const tokenMatch = item.body.match(/SGSIED-[A-Za-z0-9_-]+/);
+                  const tokenMatch = item.body.match(/(?:SGSIS-CO|SGSIED)-[A-Za-z0-9_-]+/);
                   const otpMatch = item.body.match(/Code OTP SMS\s*:\s*([A-Za-z0-9_-]{6})/);
                   const parsedToken = tokenMatch ? tokenMatch[0] : (otpMatch ? otpMatch[1] : null);
                   const isOtp = !!otpMatch;
@@ -858,7 +858,7 @@ export function Login() {
                             ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' 
                             : 'bg-blue-500/20 text-blue-400 border-blue-500/30'
                         }`}>
-                          {isOtp ? 'SGSIED Secure SMS (OTP)' : 'SGSIED Secure Mail'}
+                          {isOtp ? 'SGSIS-CO Secure SMS (OTP)' : 'SGSIS-CO Secure Mail'}
                         </span>
                         <span className="text-[9px] text-slate-500 font-mono">
                           {new Date(item.sentAt).toLocaleTimeString('fr-FR')}
@@ -925,7 +925,7 @@ export function Login() {
 
           {/* System status details at bottom */}
           <div className="border-t border-cyan-900 pt-4 mt-4 text-[10px] text-cyan-100/50 font-mono shrink-0 flex justify-between items-center">
-            <span>SGSIED MAIL ENGINE v1.2</span>
+            <span>SGSIS-CO MAIL ENGINE v1.2</span>
             <span className="text-emerald-500 font-bold flex items-center">
               <span className="h-2 w-2 bg-emerald-500 rounded-full mr-1.5 inline-block" />
               ONLINE (SANDBOX)

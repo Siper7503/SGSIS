@@ -14,7 +14,7 @@ import { PDFParse } from "pdf-parse";
 import { GoogleGenAI } from "@google/genai";
 import bcrypt from "bcryptjs";
 import { createOneTimeToken, hashSecret, secretsMatch, signSession } from "./src/lib/auth-security.ts";
-import { ADMIN_MANAGED_ROLES, ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SCHOOL_USER_ROLES, SCHOOL_WRITE_ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from "./src/lib/roles.ts";
+import { ADMIN_MANAGED_ROLES, ARRONDISSEMENT_ROLES, DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SCHOOL_USER_ROLES, SCHOOL_WRITE_ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from "./src/lib/roles.ts";
 import { createFacilitiesRouter } from "./src/server/routes/facilities.ts";
 import { attachModuleWorkflow, saveModuleWorkflow, isSchoolDataWriter } from "./src/server/module-workflow.ts";
 import { DEFAULT_SCHOOL_YEAR, isValidSchoolYear } from "./src/lib/schoolYears.ts";
@@ -143,6 +143,9 @@ function rightsForRole(role: string | null | undefined): string {
   if (hasAnyRole(role, SUPER_ADMIN_ROLES)) {
     return "super administration technique, gestion des droits d'acces et audit global";
   }
+  if (hasAnyRole(role, DGSS_ROLES)) {
+    return "administration metier DGSS, supervision globale et lecture des donnees";
+  }
   if (hasAnyRole(role, ARRONDISSEMENT_ROLES)) {
     return "supervision territoriale, lecture et controle des donnees de l'arrondissement";
   }
@@ -167,7 +170,7 @@ function canManageTargetAccount(managerRole: string | null | undefined, targetRo
   }
 
   if (hasAnyRole(managerRole, SUPER_ADMIN_ROLES)) {
-    return hasAnyRole(targetRole, [...SYSTEM_ADMIN_ROLES, ...SCHOOL_USER_ROLES]);
+    return hasAnyRole(targetRole, [...ADMIN_MANAGED_ROLES, ...SCHOOL_USER_ROLES]);
   }
 
   if (hasAnyRole(managerRole, DSE_ROLES)) {
@@ -198,6 +201,10 @@ function filterUsersForRequester(allUsers: any[], requester: AuthRequest["user"]
     return allUsers.filter((user) => hasAnyRole(user.role, SCHOOL_USER_ROLES));
   }
 
+  if (hasAnyRole(requester?.role, DGSS_ROLES)) {
+    return allUsers.filter((user) => !hasAnyRole(user.role, SUPER_ADMIN_ROLES));
+  }
+
   if (hasAnyRole(requester?.role, ARRONDISSEMENT_ROLES)) {
     return allUsers.filter((user) => user.arrondissement && requester?.arrondissement && user.arrondissement === requester.arrondissement);
   }
@@ -216,7 +223,7 @@ function filterEstablishmentsForRequester(allEstablishments: any[], requester: A
   if (hasAnyRole(requester?.role, [ROLES.VISITEUR])) {
     return allEstablishments.filter((etablissement) => !etablissement.archived);
   }
-  if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) return allEstablishments;
+  if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DGSS_ROLES, ...DSE_ROLES])) return allEstablishments;
   if (hasAnyRole(requester?.role, ARRONDISSEMENT_ROLES)) {
     return allEstablishments.filter((etablissement) => etablissement.arrondissement === requester?.arrondissement);
   }
@@ -227,7 +234,7 @@ function filterEstablishmentsForRequester(allEstablishments: any[], requester: A
 }
 
 function filterRowsForRequester(rows: any[], requester: AuthRequest["user"]): any[] {
-  if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) return rows;
+  if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DGSS_ROLES, ...DSE_ROLES])) return rows;
   if (hasAnyRole(requester?.role, ARRONDISSEMENT_ROLES)) {
     return rows.filter((row) => row.arrondissement === requester?.arrondissement || row.etablissementArrondissement === requester?.arrondissement);
   }
@@ -459,8 +466,8 @@ async function startServer() {
       });
 
       // 7. Simuler l'envoi du jeton par email
-      const emailSubject = "Bienvenue sur SGSIED - Votre jeton d'accès sécurisé";
-      const emailBody = `Bonjour ${prenom} ${nom},\n\nVotre compte d'accès sécurisé SGSIED en tant que "${role}" a été créé avec succès.\n\nLe système vous a attribué automatiquement le droit de contrôle suivant :\n👉 ${rights}\n\nVoici votre jeton de sécurité à conserver précieusement pour vos futures authentifications d'accès ou récupérations :\n🔑 Code d'accès : ${accessToken}\n\nVous pouvez utiliser ce code comme alternative à votre mot de passe pour vous connecter.\n\nCordialement,\nL'administration SGSIED Burkina Faso.`;
+      const emailSubject = "Bienvenue sur SGSIS-CO - Votre jeton d'accès sécurisé";
+      const emailBody = `Bonjour ${prenom} ${nom},\n\nVotre compte d'accès sécurisé SGSIS-CO en tant que "${role}" a été créé avec succès.\n\nLe système vous a attribué automatiquement le droit de contrôle suivant :\n👉 ${rights}\n\nVoici votre jeton de sécurité à conserver précieusement pour vos futures authentifications d'accès ou récupérations :\n🔑 Code d'accès : ${accessToken}\n\nVous pouvez utiliser ce code comme alternative à votre mot de passe pour vous connecter.\n\nCordialement,\nL'administration SGSIS-CO Burkina Faso.`;
       
       const simulatedEmail = {
         id: "em_" + Math.random().toString(36).substring(2, 9),
@@ -685,7 +692,7 @@ async function startServer() {
           id: "em_" + Math.random().toString(36).substring(2, 9),
           to: user.email,
           subject: "🔑 [SMS OTP] Votre code de sécurité double facteur (2FA)",
-          body: `Bonjour ${user.prenom || ''} ${user.nom || ''},\n\nUn code de sécurité à 6 caractères alphanumériques a été généré pour valider votre connexion en double facteur (2FA) sur SGSIED.\n\n📱 Code OTP SMS : ${otpCode}\n\nCe code est valable pendant 5 minutes. Ne le partagez jamais.\n\nCordialement,\nL'administration SGSIED Burkina Faso.`,
+          body: `Bonjour ${user.prenom || ''} ${user.nom || ''},\n\nUn code de sécurité à 6 caractères alphanumériques a été généré pour valider votre connexion en double facteur (2FA) sur SGSIS-CO.\n\n📱 Code OTP SMS : ${otpCode}\n\nCe code est valable pendant 5 minutes. Ne le partagez jamais.\n\nCordialement,\nL'administration SGSIS-CO Burkina Faso.`,
           sentAt: new Date().toISOString()
         };
         simulatedEmails.unshift(simulatedEmail);
@@ -875,8 +882,8 @@ async function startServer() {
       });
 
       // Simuler l'envoi du jeton de récupération par email
-      const emailSubject = "Récupération de compte SGSIED - Votre Jeton de Sécurité";
-      const emailBody = `Bonjour ${user.prenom || ''} ${user.nom || ''},\n\nVous avez demandé la récupération de votre compte d'accès SGSIED.\n\nVoici votre jeton de code de sécurité réutilisable à saisir lors de votre connexion :\n🔑 Jeton d'accès : ${tokenToUse}\n\nVous pouvez utiliser ce jeton de code directement sur notre formulaire de connexion alternative pour accéder de nouveau à votre session.\n\nCordialement,\nLa Direction du Suivi des Établissements (DSE).`;
+      const emailSubject = "Récupération de compte SGSIS-CO - Votre Jeton de Sécurité";
+      const emailBody = `Bonjour ${user.prenom || ''} ${user.nom || ''},\n\nVous avez demandé la récupération de votre compte d'accès SGSIS-CO.\n\nVoici votre jeton de code de sécurité réutilisable à saisir lors de votre connexion :\n🔑 Jeton d'accès : ${tokenToUse}\n\nVous pouvez utiliser ce jeton de code directement sur notre formulaire de connexion alternative pour accéder de nouveau à votre session.\n\nCordialement,\nLa Direction du Suivi des Établissements (DSE).`;
 
       const simulatedEmail = {
         id: "em_" + Math.random().toString(36).substring(2, 9),
@@ -943,6 +950,54 @@ async function startServer() {
         entityType: "users",
         entityId: usersFound[0].id,
         details: { email: usersFound[0].email }
+      });
+
+      res.json({ success: true, user: publicUser(updated[0]) });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Authenticated users can update their own personal contact information.
+  app.put("/api/auth/profile", requireAuth, async (req: AuthRequest, res) => {
+    if (!req.user) {
+      res.status(401).json({ error: "Session utilisateur introuvable." });
+      return;
+    }
+
+    try {
+      const nom = typeof req.body.nom === 'string' ? req.body.nom.trim() : '';
+      const prenom = typeof req.body.prenom === 'string' ? req.body.prenom.trim() : '';
+      const telephone = typeof req.body.telephone === 'string' ? req.body.telephone.replace(/\s+/g, '') : '';
+
+      if (!nom || !prenom || !telephone) {
+        res.status(400).json({ error: "Le nom, le prenom et le numero de telephone sont obligatoires." });
+        return;
+      }
+      if (!/^\d+$/.test(telephone)) {
+        res.status(400).json({ error: "Le numero de telephone doit contenir uniquement des chiffres." });
+        return;
+      }
+
+      const userQuery = req.user.id
+        ? db.select().from(users).where(eq(users.id, req.user.id))
+        : db.select().from(users).where(eq(users.email, req.user.email || ""));
+      const usersFound = await userQuery;
+      if (usersFound.length === 0) {
+        res.status(404).json({ error: "Utilisateur non trouve." });
+        return;
+      }
+
+      const updated = await db.update(users).set({ nom, prenom, telephone })
+        .where(eq(users.id, usersFound[0].id))
+        .returning();
+
+      await db.insert(auditLogs).values({
+        userId: usersFound[0].id,
+        action: "MODIFICATION_PROFIL_PERSONNEL",
+        entityType: "users",
+        entityId: usersFound[0].id,
+        details: { fields: ["nom", "prenom", "telephone"] }
       });
 
       res.json({ success: true, user: publicUser(updated[0]) });
@@ -1177,7 +1232,7 @@ async function startServer() {
       const simulatedEmail = {
         id: "em_" + Math.random().toString(36).substring(2, 9),
         to: email,
-        subject: "Création de votre compte SGSIED par l'Administrateur",
+        subject: "Création de votre compte SGSIS-CO par l'Administrateur",
         body: `Bonjour ${prenom} ${nom},\n\nVotre compte d'accès sécurisé SGSIS en tant que "${role}" a été créé avec succès par l'administration habilitée.\n\nLe système vous a attribué automatiquement le droit de contrôle suivant :\n${rights}\n\nVos identifiants de connexion :\nEmail : ${email}\nMot de passe initial : ${password}\nJeton d'accès de secours : ${accessToken}\n\nVous pouvez utiliser ce code comme alternative à votre mot de passe pour vous connecter.\n\nCordialement,\nL'administration SGSIS - Commune de Ouagadougou.`,
         sentAt: new Date().toISOString()
       };
@@ -2474,7 +2529,7 @@ async function startServer() {
   app.get("/api/communications", requireAuth, async (req: AuthRequest, res) => {
     try {
       const results = await db.select().from(communications).orderBy(communications.createdAt);
-      if (hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) {
+      if (hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...DGSS_ROLES])) {
         res.json(results);
         return;
       }
@@ -2801,7 +2856,7 @@ async function startServer() {
 
   // Admin: Users
   app.get("/api/users", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ROLES.PROVISEUR], "Acces refuse : la liste des utilisateurs est reservee aux profils habilites.")) return;
+    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...DGSS_ROLES, ROLES.PROVISEUR], "Acces refuse : la liste des utilisateurs est reservee aux profils habilites.")) return;
     try {
       const results = await db.select().from(users).orderBy(users.createdAt);
       res.json(filterUsersForRequester(results, req.user).map(publicUser));
@@ -2856,7 +2911,7 @@ async function startServer() {
 
   // Annual school reports: structured data with a secondary-school approval workflow.
   app.get("/api/annual-reports", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...ARRONDISSEMENT_ROLES, ...LOCAL_SCHOOL_ROLES, ROLES.VISITEUR], "Acces refuse : vous n'avez pas acces aux rapports annuels.")) return;
+    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...DGSS_ROLES, ...ARRONDISSEMENT_ROLES, ...LOCAL_SCHOOL_ROLES, ROLES.VISITEUR], "Acces refuse : vous n'avez pas acces aux rapports annuels.")) return;
     try {
       const reports = await db.select({
         report: annualReports,
@@ -2865,7 +2920,7 @@ async function startServer() {
 
       const visible = reports.filter((row) => {
         if (hasAnyRole(req.user?.role, [ROLES.VISITEUR])) return row.report.statut === "Valide";
-        if (hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) return true;
+        if (hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...DGSS_ROLES])) return true;
         if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)) return Boolean(row.etablissement?.arrondissement === req.user?.arrondissement);
         return Boolean(req.user?.etablissementId && row.report.etablissementId === req.user.etablissementId);
       });

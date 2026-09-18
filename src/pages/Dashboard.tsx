@@ -56,7 +56,7 @@ import {
   Pie, 
   Cell
 } from 'recharts';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { ARRONDISSEMENT_ROLES, BUSINESS_ADMIN_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
 import VisitorDashboard from './VisitorDashboard.tsx';
 import * as XLSX from 'xlsx';
 
@@ -861,7 +861,7 @@ export default function Dashboard() {
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <Shield className="h-5 w-5 text-emerald-600" />
             <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500">Administrateurs métier</p>
-            <p className="mt-1 text-2xl font-black text-emerald-700">{adminUsers.filter((account) => hasAnyRole(account.role, SYSTEM_ADMIN_ROLES)).length}</p>
+            <p className="mt-1 text-2xl font-black text-emerald-700">{adminUsers.filter((account) => hasAnyRole(account.role, BUSINESS_ADMIN_ROLES)).length}</p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <Activity className="h-5 w-5 text-amber-600" />
@@ -931,7 +931,7 @@ export default function Dashboard() {
             Console de Sécurité et de Traçabilité
           </h1>
           <p className="mt-2 text-slate-300 max-w-2xl text-sm leading-relaxed">
-            Bienvenue sur votre tableau de bord exclusif d'administration système. Vous disposez de la haute autorité de contrôle de l'ensemble du réseau SGSIED : audit complet en direct, blocage instantané et création/révocation des comptes d'accès.
+                Bienvenue sur votre tableau de bord exclusif d'administration système. Vous disposez de la haute autorité de contrôle de l'ensemble du réseau SGSIS-CO : audit complet en direct, blocage instantané et création/révocation des comptes d'accès.
           </p>
           <div className="mt-6 flex flex-wrap gap-4 text-xs font-mono">
             <div className="bg-white bg-opacity-5 backdrop-blur-sm px-3.5 py-2 rounded-lg border border-white border-opacity-5">

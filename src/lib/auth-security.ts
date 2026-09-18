@@ -16,7 +16,7 @@ export function getJwtSecret(): string {
   return developmentSecret;
 }
 
-export function createOneTimeToken(prefix = 'SGSIED'): string {
+export function createOneTimeToken(prefix = 'SGSIS-CO'): string {
   return `${prefix}-${randomBytes(18).toString('base64url')}`;
 }
 

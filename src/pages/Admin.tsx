@@ -268,7 +268,7 @@ export default function Admin() {
     }
   };
 
-  const connectionToken = simulatedEmail?.body?.match(/SGSIED-[A-Za-z0-9_-]+/)?.[0] || null;
+  const connectionToken = simulatedEmail?.body?.match(/(?:SGSIS-CO|SGSIED)-[A-Za-z0-9_-]+/)?.[0] || null;
   const selectedUserEtablissement = selectedUser?.etablissementId
     ? etablissements.find((item) => Number(item.id) === Number(selectedUser.etablissementId))
     : null;

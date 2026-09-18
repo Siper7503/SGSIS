@@ -1,5 +1,7 @@
 export const ROLES = {
   SUPER_ADMIN: "SuperAdmin",
+  DIRECTEUR_DGSS: "Directeur DGSS",
+  ADMIN_DGSS_LEGACY: "Administrateur DGSS",
   ADMIN_DSE: "Administrateur DSE",
   ADMIN_DSE_LEGACY: "Administrateur DSE",
   DIRECTEUR_DSE: "Directeur DSE",
@@ -15,6 +17,7 @@ export const ROLES = {
 
 const ROLE_ALIASES: Record<string, string> = {
   // Legacy database values represented the business administrator, not the technical SuperAdmin.
+  "Administrateur DGSS": ROLES.DIRECTEUR_DGSS,
   "Administrateur DSE": ROLES.DIRECTEUR_DSE,
   "Directeurs d'école": ROLES.DIRECTEUR_ECOLE,
   "Directeurs d'Ã©cole": ROLES.DIRECTEUR_ECOLE,
@@ -47,12 +50,26 @@ export const DSE_ROLES = [
   ROLES.DIRECTEUR_DSE,
 ] as const;
 
+export const DGSS_ROLES = [
+  ROLES.DIRECTEUR_DGSS,
+  ROLES.ADMIN_DGSS_LEGACY,
+] as const;
+
 export const ARRONDISSEMENT_ROLES = [
   ROLES.RESPONSABLE_ARR,
   ROLES.RESPONSABLE_ARR_LEGACY,
 ] as const;
 
 export const SYSTEM_ADMIN_ROLES = [
+  ...DSE_ROLES,
+  ...ARRONDISSEMENT_ROLES,
+] as const;
+
+// Business administration categories. The category does not grant identical rights:
+// DGSS supervises globally, DSE operates the school-data workflows, and arrondissement
+// managers remain limited to their territory.
+export const BUSINESS_ADMIN_ROLES = [
+  ...DGSS_ROLES,
   ...DSE_ROLES,
   ...ARRONDISSEMENT_ROLES,
 ] as const;
@@ -70,7 +87,7 @@ export const SCHOOL_USER_ROLES = [
 ] as const;
 
 export const ADMIN_MANAGED_ROLES = [
-  ...SYSTEM_ADMIN_ROLES,
+  ...BUSINESS_ADMIN_ROLES,
 ] as const;
 
 export const MANAGEMENT_ROLES = [
@@ -82,3 +99,12 @@ export const SCHOOL_WRITE_ROLES = [
   ...DSE_ROLES,
   ...LOCAL_SCHOOL_ROLES,
 ] as const;
+
+export type RoleCategory = 'SuperAdmin' | 'Admin' | 'Agent' | 'Usager';
+
+export function getRoleCategory(role?: string | null): RoleCategory {
+  if (hasAnyRole(role, SUPER_ADMIN_ROLES)) return 'SuperAdmin';
+  if (hasAnyRole(role, BUSINESS_ADMIN_ROLES)) return 'Admin';
+  if (hasAnyRole(role, LOCAL_SCHOOL_ROLES)) return 'Agent';
+  return 'Usager';
+}

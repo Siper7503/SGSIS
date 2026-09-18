@@ -6,7 +6,7 @@ import { Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Brief
 import { cn } from '../lib/utils.ts';
 import { getQueuedActions, syncData } from '../lib/sync.ts';
 import { apiFetch } from '../lib/api.ts';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { ARRONDISSEMENT_ROLES, DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, getRoleCategory, hasAnyRole } from '../lib/roles.ts';
 
 const navigation = [
   { name: 'Tableau de bord', href: '/', icon: Home },
@@ -28,7 +28,7 @@ const navigation = [
 ];
 
 export function Layout() {
-  const { user, loading, token, logout } = useAuth();
+  const { user, loading, token, logout, setSecureSession } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
@@ -38,11 +38,17 @@ export function Layout() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [profileNewPassword, setProfileNewPassword] = useState('');
   const [profilePasswordConfirmation, setProfilePasswordConfirmation] = useState('');
+  const [profileNom, setProfileNom] = useState('');
+  const [profilePrenom, setProfilePrenom] = useState('');
+  const [profileTelephone, setProfileTelephone] = useState('');
   const [showProfileNewPassword, setShowProfileNewPassword] = useState(false);
   const [showProfilePasswordConfirmation, setShowProfilePasswordConfirmation] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
+  const [profileDetailsError, setProfileDetailsError] = useState<string | null>(null);
+  const [profileDetailsSuccess, setProfileDetailsSuccess] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
+  const [profileDetailsSaving, setProfileDetailsSaving] = useState(false);
 
   useEffect(() => {
     if (!profileOpen || !token || !user?.etablissementId) return;
@@ -60,11 +66,48 @@ export function Layout() {
     setProfileOpen(true);
     setProfileError(null);
     setProfileSuccess(null);
+    setProfileDetailsError(null);
+    setProfileDetailsSuccess(null);
     setCurrentPassword('');
     setProfileNewPassword('');
     setProfilePasswordConfirmation('');
+    setProfileNom(user?.nom || '');
+    setProfilePrenom(user?.prenom || '');
+    setProfileTelephone(user?.telephone || '');
     setShowProfileNewPassword(false);
     setShowProfilePasswordConfirmation(false);
+  };
+
+  const handleProfileDetailsChange = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!token) return;
+    setProfileDetailsError(null);
+    setProfileDetailsSuccess(null);
+    setProfileDetailsSaving(true);
+
+    try {
+      const response = await apiFetch('/api/auth/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          nom: profileNom,
+          prenom: profilePrenom,
+          telephone: profileTelephone
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Impossible de modifier le profil.');
+
+      setSecureSession(token, result.user);
+      setProfileDetailsSuccess('Vos informations personnelles ont ete mises a jour.');
+    } catch (error: any) {
+      setProfileDetailsError(error.message);
+    } finally {
+      setProfileDetailsSaving(false);
+    }
   };
 
   const handleProfilePasswordChange = async (event: React.FormEvent) => {
@@ -159,6 +202,7 @@ export function Layout() {
   const currentPath = location.pathname;
   const role = user?.role;
   const isSuperAdmin = hasAnyRole(role, SUPER_ADMIN_ROLES);
+  const isDgssAdmin = hasAnyRole(role, DGSS_ROLES);
   const isDseAdmin = hasAnyRole(role, DSE_ROLES);
   const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
   const isArrondissementResp = hasAnyRole(role, ARRONDISSEMENT_ROLES);
@@ -225,6 +269,25 @@ export function Layout() {
     );
   }
 
+  if (isDgssAdmin && !['/', '/etablissements', '/carte', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapports', '/rapports-annuels', '/admin'].includes(currentPath)) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
+        <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
+          <div className="h-12 w-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Eye className="h-6 w-6" />
+          </div>
+          <h2 className="text-lg font-bold text-gray-900">Acces de supervision</h2>
+          <p className="text-sm text-gray-500 mt-2">Le profil Directeur DGSS dispose d'un accès global de lecture et de supervision métier.</p>
+          <div className="mt-6">
+            <Link to="/" className="inline-flex items-center justify-center rounded-xl bg-blue-600 text-white px-4 py-2 text-sm font-bold shadow-sm hover:bg-blue-700 transition">
+              Retour au tableau de bord
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!isSuperAdmin && !isDseAdmin && currentPath === '/predictions') {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
@@ -267,7 +330,7 @@ export function Layout() {
     );
   }
 
-  if (!isSuperAdmin && !isDseAdmin && !(hasAnyRole(role, [ROLES.PROVISEUR])) && currentPath === '/admin') {
+  if (!isSuperAdmin && !isDseAdmin && !isDgssAdmin && !(hasAnyRole(role, [ROLES.PROVISEUR])) && currentPath === '/admin') {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -292,6 +355,7 @@ export function Layout() {
     // Determine user roles
     const userRole = user?.role;
     const isSuper = hasAnyRole(userRole, SUPER_ADMIN_ROLES);
+    const isDgss = hasAnyRole(userRole, DGSS_ROLES);
     const isDse = hasAnyRole(userRole, DSE_ROLES);
     const isLocal = hasAnyRole(userRole, LOCAL_SCHOOL_ROLES);
     const isArrondissementResp = hasAnyRole(userRole, ARRONDISSEMENT_ROLES);
@@ -304,6 +368,9 @@ export function Layout() {
       }
       if (isDse) {
         return item.href !== '/audit';
+      }
+      if (isDgss) {
+        return ['/', '/etablissements', '/carte', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapports', '/rapports-annuels', '/admin'].includes(item.href);
       }
       if (isLocal) {
         // Les responsables scolaires voient les modules de saisie de leur établissement.
@@ -381,6 +448,7 @@ export function Layout() {
                 {user.role && (
                   <p className="text-xs font-semibold text-blue-600 truncate">{user.role}</p>
                 )}
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Categorie : {getRoleCategory(user.role)}</p>
               </div>
               <UserCircle className="ml-auto h-4 w-4 flex-shrink-0 text-slate-400" />
             </button>
@@ -505,6 +573,7 @@ export function Layout() {
                   <div className="min-w-0">
                     <p className="truncate text-base font-black text-slate-900">{user.prenom || ''} {user.nom || ''}</p>
                     <p className="truncate text-sm text-blue-600">{user.role || 'Utilisateur'}</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Categorie : {getRoleCategory(user.role)}</p>
                   </div>
                 </div>
               </div>
@@ -519,10 +588,56 @@ export function Layout() {
                 </dl>
               </div>
 
+              <form onSubmit={handleProfileDetailsChange} className="rounded-xl border border-slate-200 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Modifier mes informations</p>
+                {profileDetailsError && <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{profileDetailsError}</p>}
+                {profileDetailsSuccess && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{profileDetailsSuccess}</p>}
+                <div className="mt-3 space-y-3">
+                  <label className="block text-xs font-semibold text-slate-600">
+                    Nom
+                    <input
+                      type="text"
+                      required
+                      value={profileNom}
+                      onChange={(event) => setProfileNom(event.target.value)}
+                      autoComplete="family-name"
+                      className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-600">
+                    Prenom
+                    <input
+                      type="text"
+                      required
+                      value={profilePrenom}
+                      onChange={(event) => setProfilePrenom(event.target.value)}
+                      autoComplete="given-name"
+                      className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-600">
+                    Numero de telephone
+                    <input
+                      type="tel"
+                      required
+                      inputMode="numeric"
+                      value={profileTelephone}
+                      onChange={(event) => setProfileTelephone(event.target.value)}
+                      autoComplete="tel"
+                      className="mt-1.5 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                </div>
+                <button type="submit" disabled={profileDetailsSaving} className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50">
+                  {profileDetailsSaving ? 'Enregistrement...' : 'Enregistrer mes informations'}
+                </button>
+              </form>
+
               <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-blue-500">Affectation et droits</p>
                 <dl className="mt-3 space-y-2 text-sm text-slate-700">
                   <div><dt className="inline font-semibold">Role : </dt><dd className="inline">{user.role || 'Non renseigne'}</dd></div>
+                  <div><dt className="inline font-semibold">Categorie : </dt><dd className="inline">{getRoleCategory(user.role)}</dd></div>
                   <div><dt className="inline font-semibold">Arrondissement : </dt><dd className="inline">{user.arrondissement || 'Global'}</dd></div>
                   <div><dt className="inline font-semibold">Etablissement : </dt><dd className="inline">{profileEstablishmentName || (user.etablissementId ? `ID ${user.etablissementId}` : 'Tous les etablissements')}</dd></div>
                   <div><dt className="inline font-semibold">Droits : </dt><dd className="inline">{user.rights || 'Lecture et recherche'}</dd></div>

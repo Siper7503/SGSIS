@@ -3,7 +3,7 @@ import { db } from '../../db/index.ts';
 import { etablissements, incidents, tice, wash } from '../../db/schema.ts';
 import { eq } from 'drizzle-orm';
 import { requireAuth, AuthRequest } from '../../middleware/auth.ts';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../../lib/roles.ts';
+import { ARRONDISSEMENT_ROLES, DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../../lib/roles.ts';
 import { attachModuleWorkflow, saveModuleWorkflow, isSchoolDataWriter } from '../module-workflow.ts';
 
 type AuditLogger = (
@@ -52,7 +52,7 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
   router.get('/api/incidents', requireAuth, async (req: AuthRequest, res) => {
     try {
       const results = await db.select().from(incidents).orderBy(incidents.dateSignalement);
-      if (hasAnyRole(req.user?.role, [...DSE_ROLES, ...SUPER_ADMIN_ROLES])) {
+      if (hasAnyRole(req.user?.role, [...DSE_ROLES, ...DGSS_ROLES, ...SUPER_ADMIN_ROLES])) {
         res.json(await attachModuleWorkflow(results, 'incidents'));
       } else if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES) && req.user?.arrondissement) {
         const scopedEstablishments = await db.select({ id: etablissements.id })
@@ -132,7 +132,7 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
       const rows = await db.select({ record: wash, arrondissement: etablissements.arrondissement })
         .from(wash)
         .leftJoin(etablissements, eq(wash.etablissementId, etablissements.id));
-      const visible = hasAnyRole(req.user?.role, [...DSE_ROLES, ...SUPER_ADMIN_ROLES])
+      const visible = hasAnyRole(req.user?.role, [...DSE_ROLES, ...DGSS_ROLES, ...SUPER_ADMIN_ROLES])
         ? rows
         : rows.filter((row) => hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)
           ? row.arrondissement === req.user?.arrondissement
@@ -199,7 +199,7 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
       const rows = await db.select({ record: tice, arrondissement: etablissements.arrondissement })
         .from(tice)
         .leftJoin(etablissements, eq(tice.etablissementId, etablissements.id));
-      const visible = hasAnyRole(req.user?.role, [...DSE_ROLES, ...SUPER_ADMIN_ROLES])
+      const visible = hasAnyRole(req.user?.role, [...DSE_ROLES, ...DGSS_ROLES, ...SUPER_ADMIN_ROLES])
         ? rows
         : rows.filter((row) => hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)
           ? row.arrondissement === req.user?.arrondissement
