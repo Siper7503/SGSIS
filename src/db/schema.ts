@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { integer, pgTable, serial, text, timestamp, boolean, jsonb } from 'drizzle-orm/pg-core';
+import { integer, pgTable, serial, text, timestamp, boolean, jsonb, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
@@ -157,6 +157,7 @@ export const annualReports = pgTable('annual_reports', {
   id: serial('id').primaryKey(),
   etablissementId: integer('etablissement_id').references(() => etablissements.id).notNull(),
   anneeScolaire: text('annee_scolaire').notNull(),
+  typeRapport: text('type_rapport').notNull().default('entree'),
   statut: text('statut').notNull().default('Brouillon'),
   donnees: jsonb('donnees').notNull().default({}),
   createdById: integer('created_by_id').references(() => users.id),
@@ -166,7 +167,13 @@ export const annualReports = pgTable('annual_reports', {
   updatedAt: timestamp('updated_at').defaultNow(),
   submittedAt: timestamp('submitted_at'),
   validatedAt: timestamp('validated_at'),
-});
+}, (table) => [
+  uniqueIndex('annual_reports_establishment_year_type_unique').on(
+    table.etablissementId,
+    table.anneeScolaire,
+    table.typeRapport,
+  ),
+]);
 
 export const moduleSubmissions = pgTable('module_submissions', {
   id: serial('id').primaryKey(),
@@ -182,7 +189,9 @@ export const moduleSubmissions = pgTable('module_submissions', {
   updatedAt: timestamp('updated_at').defaultNow(),
   submittedAt: timestamp('submitted_at'),
   reviewedAt: timestamp('reviewed_at'),
-});
+}, (table) => [
+  uniqueIndex('module_submissions_module_record_unique').on(table.module, table.recordId),
+]);
 
 export const communicationReceipts = pgTable('communication_receipts', {
   id: serial('id').primaryKey(),

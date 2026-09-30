@@ -14,8 +14,11 @@ import { PDFParse } from "pdf-parse";
 import { GoogleGenAI } from "@google/genai";
 import bcrypt from "bcryptjs";
 import { createOneTimeToken, hashSecret, secretsMatch, signSession } from "./src/lib/auth-security.ts";
-import { ADMIN_MANAGED_ROLES, ARRONDISSEMENT_ROLES, DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SCHOOL_USER_ROLES, SCHOOL_WRITE_ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole } from "./src/lib/roles.ts";
+import { DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SCHOOL_USER_ROLES, SCHOOL_WRITE_ROLES, SUPER_ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasAnyRole, isAgentRoleForEstablishment, normalizeRole } from "./src/lib/roles.ts";
+import { canCreateTargetRole, canManageScopedTarget } from "./src/lib/authorization.ts";
+import type { PublicUser } from "./src/lib/shared-types.ts";
 import { createFacilitiesRouter } from "./src/server/routes/facilities.ts";
+import { createAnnualReportsRouter } from "./src/server/routes/annual-reports.ts";
 import { attachModuleWorkflow, saveModuleWorkflow, isSchoolDataWriter } from "./src/server/module-workflow.ts";
 import { DEFAULT_SCHOOL_YEAR, isValidSchoolYear } from "./src/lib/schoolYears.ts";
 
@@ -31,6 +34,30 @@ const simulatedEmails: SimulatedEmail[] = [];
 const MAX_LOGIN_ATTEMPTS = 5;
 const AUTO_LOCK_MINUTES = 10;
 const AUTO_LOCK_MS = AUTO_LOCK_MINUTES * 60 * 1000;
+const ACTIVE_AGENT_INDEX = "users_one_active_agent_per_establishment_idx";
+const RETIRED_SECRETARY_ROLE_NAMES = new Set([
+  "secretaire administratif",
+  "secretaire adminstratif",
+  "sécretaire adminstratif",
+  "sã©cretaire adminstratif",
+  "secrétaire administratif",
+  "secrã©taire administratif",
+]);
+
+function isRetiredSecretaryRole(role: string): boolean {
+  return RETIRED_SECRETARY_ROLE_NAMES.has(role.trim().toLowerCase());
+}
+
+function isActiveAgentConflict(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === "23505" &&
+    "constraint" in error &&
+    error.constraint === ACTIVE_AGENT_INDEX
+  );
+}
 
 const DISPOSABLE_DOMAINS = [
   "yopmail.com", "tempmail.com", "mailinator.com", "10minutemail.com", 
@@ -120,23 +147,7 @@ function canManageUsers(role?: string | null): boolean {
 }
 
 function canCreateUsers(role?: string | null): boolean {
-  return canManageUsers(role) || hasAnyRole(role, [ROLES.PROVISEUR]);
-}
-
-function canCreateTargetRole(managerRole: string | null | undefined, targetRole: string | null | undefined): boolean {
-  if (hasAnyRole(managerRole, SUPER_ADMIN_ROLES)) {
-    return hasAnyRole(targetRole, [...ADMIN_MANAGED_ROLES, ...SUPER_ADMIN_ROLES]);
-  }
-
-  if (hasAnyRole(managerRole, DSE_ROLES)) {
-    return hasAnyRole(targetRole, SCHOOL_USER_ROLES);
-  }
-
-  if (hasAnyRole(managerRole, [ROLES.PROVISEUR])) {
-    return hasAnyRole(targetRole, [ROLES.SECRETAIRE_ADMIN, ROLES.SECRETAIRE_ADMIN_LEGACY]);
-  }
-
-  return false;
+  return canManageUsers(role);
 }
 
 function rightsForRole(role: string | null | undefined): string {
@@ -145,9 +156,6 @@ function rightsForRole(role: string | null | undefined): string {
   }
   if (hasAnyRole(role, DGSS_ROLES)) {
     return "administration metier DGSS, supervision globale et lecture des donnees";
-  }
-  if (hasAnyRole(role, ARRONDISSEMENT_ROLES)) {
-    return "supervision territoriale, lecture et controle des donnees de l'arrondissement";
   }
   if (hasAnyRole(role, SYSTEM_ADMIN_ROLES)) {
     return "administration metier, pilotage, lecture, ecriture et recherche";
@@ -158,41 +166,16 @@ function rightsForRole(role: string | null | undefined): string {
   return "lecture et recherche";
 }
 
-function publicUser(user: any) {
+function publicUser(user: typeof users.$inferSelect | null | undefined): PublicUser | null {
   if (!user) return null;
   const { passwordHash, accessToken, otpCode, otpExpiresAt, ...safeUser } = user;
   return safeUser;
 }
 
-function canManageTargetAccount(managerRole: string | null | undefined, targetRole: string | null | undefined): boolean {
-  if (hasAnyRole(targetRole, SUPER_ADMIN_ROLES)) {
-    return false;
-  }
+type UserRow = typeof users.$inferSelect;
+type EstablishmentRow = typeof etablissements.$inferSelect;
 
-  if (hasAnyRole(managerRole, SUPER_ADMIN_ROLES)) {
-    return hasAnyRole(targetRole, [...ADMIN_MANAGED_ROLES, ...SCHOOL_USER_ROLES]);
-  }
-
-  if (hasAnyRole(managerRole, DSE_ROLES)) {
-    return hasAnyRole(targetRole, SCHOOL_USER_ROLES);
-  }
-
-  if (hasAnyRole(managerRole, [ROLES.PROVISEUR])) {
-    return hasAnyRole(targetRole, [ROLES.SECRETAIRE_ADMIN, ROLES.SECRETAIRE_ADMIN_LEGACY]);
-  }
-
-  return false;
-}
-
-function canManageScopedTarget(manager: AuthRequest["user"], target: any): boolean {
-  if (!manager || !canManageTargetAccount(manager.role, target?.role)) return false;
-  if (hasAnyRole(manager.role, [ROLES.PROVISEUR])) {
-    return Boolean(manager.etablissementId && target?.etablissementId === manager.etablissementId);
-  }
-  return true;
-}
-
-function filterUsersForRequester(allUsers: any[], requester: AuthRequest["user"]): any[] {
+function filterUsersForRequester(allUsers: UserRow[], requester: AuthRequest["user"]): UserRow[] {
   if (hasAnyRole(requester?.role, SUPER_ADMIN_ROLES)) {
     return allUsers;
   }
@@ -205,39 +188,26 @@ function filterUsersForRequester(allUsers: any[], requester: AuthRequest["user"]
     return allUsers.filter((user) => !hasAnyRole(user.role, SUPER_ADMIN_ROLES));
   }
 
-  if (hasAnyRole(requester?.role, ARRONDISSEMENT_ROLES)) {
-    return allUsers.filter((user) => user.arrondissement && requester?.arrondissement && user.arrondissement === requester.arrondissement);
-  }
-
-  if (hasAnyRole(requester?.role, [ROLES.PROVISEUR])) {
-    return allUsers.filter((user) =>
-      hasAnyRole(user.role, [ROLES.SECRETAIRE_ADMIN, ROLES.SECRETAIRE_ADMIN_LEGACY]) &&
-      user.etablissementId && requester?.etablissementId && user.etablissementId === requester.etablissementId
-    );
-  }
-
   return [];
 }
 
-function filterEstablishmentsForRequester(allEstablishments: any[], requester: AuthRequest["user"]): any[] {
-  if (hasAnyRole(requester?.role, [ROLES.VISITEUR])) {
+function filterEstablishmentsForRequester(allEstablishments: EstablishmentRow[], requester: AuthRequest["user"]): EstablishmentRow[] {
+  if (hasAnyRole(requester?.role, [ROLES.USER])) {
     return allEstablishments.filter((etablissement) => !etablissement.archived);
   }
   if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DGSS_ROLES, ...DSE_ROLES])) return allEstablishments;
-  if (hasAnyRole(requester?.role, ARRONDISSEMENT_ROLES)) {
-    return allEstablishments.filter((etablissement) => etablissement.arrondissement === requester?.arrondissement);
-  }
   if (hasAnyRole(requester?.role, LOCAL_SCHOOL_ROLES)) {
     return allEstablishments.filter((etablissement) => etablissement.id === requester?.etablissementId);
   }
   return [];
 }
 
-function filterRowsForRequester(rows: any[], requester: AuthRequest["user"]): any[] {
+function filterRowsForRequester<T extends {
+  arrondissement?: string | null;
+  etablissementArrondissement?: string | null;
+  etablissementId?: number | null;
+}>(rows: T[], requester: AuthRequest["user"]): T[] {
   if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DGSS_ROLES, ...DSE_ROLES])) return rows;
-  if (hasAnyRole(requester?.role, ARRONDISSEMENT_ROLES)) {
-    return rows.filter((row) => row.arrondissement === requester?.arrondissement || row.etablissementArrondissement === requester?.arrondissement);
-  }
   if (hasAnyRole(requester?.role, LOCAL_SCHOOL_ROLES)) {
     return rows.filter((row) => row.etablissementId === requester?.etablissementId);
   }
@@ -250,12 +220,85 @@ async function ensureDatabaseShape() {
   await db.execute(sql`alter table users add column if not exists is_active boolean not null default true`);
   await db.execute(sql`alter table users add column if not exists deactivated_at timestamp`);
   await db.execute(sql`alter table users add column if not exists deactivated_by_id integer`);
+  await db.execute(sql`
+    update users as account
+    set role = case
+      when lower(establishment.type) = 'primaire' then 'Directeur d''école primaire'
+      when lower(establishment.type) = 'secondaire' and lower(establishment.statut) = 'public'
+        then 'Proviseur d''établissement secondaire public'
+    end
+    from etablissements as establishment
+    where account.etablissement_id = establishment.id
+      and lower(account.role) = 'directeur / proviseur'
+      and (
+        lower(establishment.type) = 'primaire'
+        or (lower(establishment.type) = 'secondaire' and lower(establishment.statut) = 'public')
+      )
+  `);
+  await db.execute(sql`
+    update users
+    set is_active = false,
+        deactivated_at = coalesce(deactivated_at, now()),
+        is_locked = false,
+        login_attempts = 0,
+        lock_expires_at = null,
+        otp_code = null,
+        otp_expires_at = null
+    where lower(role) in (
+      'secretaire administratif',
+      'secretaire adminstratif',
+      'sécretaire adminstratif',
+      'sã©cretaire adminstratif',
+      'secrétaire administratif',
+      'secrã©taire administratif',
+      'responsable d''arrondissement',
+      'directeur / proviseur'
+    )
+      and is_active = true
+  `);
+  await db.execute(sql`
+    update users
+    set role = case lower(role)
+      when 'administrateur dgss' then 'Directeur DGSS'
+      when 'administrateur dse' then 'Directeur DSE'
+      when 'utilisateur lambda(visiteur)' then 'Usager'
+      when 'visiteur' then 'Usager'
+      when 'directeur d''ecole primaire' then 'Directeur d''école primaire'
+      when 'directeurs d''ecole' then 'Directeur d''école primaire'
+      when 'directeurs d''école' then 'Directeur d''école primaire'
+      when 'directeurs d''ã©cole' then 'Directeur d''école primaire'
+      when 'proviseur d''etablissement' then 'Proviseur d''établissement secondaire public'
+      when 'proviseur d''établissement' then 'Proviseur d''établissement secondaire public'
+      when 'proviseur d''ã©tablissement' then 'Proviseur d''établissement secondaire public'
+    end
+    where lower(role) in (
+      'administrateur dgss',
+      'administrateur dse',
+      'utilisateur lambda(visiteur)',
+      'visiteur',
+      'directeur d''ecole primaire',
+      'directeurs d''ecole',
+      'directeurs d''école',
+      'directeurs d''ã©cole',
+      'proviseur d''etablissement',
+      'proviseur d''établissement',
+      'proviseur d''ã©tablissement'
+    )
+  `);
+  await db.execute(sql`
+    create unique index if not exists users_one_active_agent_per_establishment_idx
+    on users (etablissement_id)
+    where is_active = true
+      and etablissement_id is not null
+      and role in ('Directeur d''école primaire', 'Proviseur d''établissement secondaire public')
+  `);
   await db.execute(sql`alter table constructions add column if not exists etablissement_id integer references etablissements(id)`);
   await db.execute(sql`
     create table if not exists annual_reports (
       id serial primary key,
       etablissement_id integer not null references etablissements(id),
       annee_scolaire text not null,
+      type_rapport text not null default 'entree',
       statut text not null default 'Brouillon',
       donnees jsonb not null default '{}'::jsonb,
       created_by_id integer references users(id),
@@ -267,6 +310,7 @@ async function ensureDatabaseShape() {
       validated_at timestamp
     )
   `);
+  await db.execute(sql`alter table annual_reports add column if not exists type_rapport text not null default 'entree'`);
   await db.execute(sql`
     create table if not exists module_submissions (
       id serial primary key,
@@ -283,6 +327,42 @@ async function ensureDatabaseShape() {
       submitted_at timestamp,
       reviewed_at timestamp
     )
+  `);
+
+  const duplicateReports = await db.select({
+    etablissementId: annualReports.etablissementId,
+    anneeScolaire: annualReports.anneeScolaire,
+    typeRapport: annualReports.typeRapport,
+    count: sql<number>`count(*)::int`,
+  }).from(annualReports)
+    .groupBy(annualReports.etablissementId, annualReports.anneeScolaire, annualReports.typeRapport)
+    .having(sql`count(*) > 1`);
+  if (duplicateReports.length > 0) {
+    throw new Error(
+      `Cannot enforce annual report uniqueness until duplicate rows are reviewed and reconciled: ${JSON.stringify(duplicateReports)}`,
+    );
+  }
+
+  const duplicateSubmissions = await db.select({
+    module: moduleSubmissions.module,
+    recordId: moduleSubmissions.recordId,
+    count: sql<number>`count(*)::int`,
+  }).from(moduleSubmissions)
+    .groupBy(moduleSubmissions.module, moduleSubmissions.recordId)
+    .having(sql`count(*) > 1`);
+  if (duplicateSubmissions.length > 0) {
+    throw new Error(
+      `Cannot enforce module submission uniqueness until duplicate rows are reviewed and reconciled: ${JSON.stringify(duplicateSubmissions)}`,
+    );
+  }
+
+  await db.execute(sql`
+    create unique index if not exists annual_reports_establishment_year_type_unique
+    on annual_reports (etablissement_id, annee_scolaire, type_rapport)
+  `);
+  await db.execute(sql`
+    create unique index if not exists module_submissions_module_record_unique
+    on module_submissions (module, record_id)
   `);
 }
 
@@ -372,7 +452,8 @@ async function startServer() {
   // Upgraded secure user registration endpoint
   app.post("/api/auth/register-secure", async (req, res) => {
     try {
-      const { nom, prenom, email, telephone, password, role, arrondissement, etablissementId } = req.body;
+      const { nom, prenom, email, telephone, password, arrondissement, etablissementId } = req.body;
+      const role = normalizeRole(req.body.role);
       
       // 1. Strict Email Validation
       const emailValidation = validateEmailSecured(email);
@@ -411,7 +492,7 @@ async function startServer() {
       const existingUsers = await db.select().from(users).where(eq(users.email, email));
       const allSystemUsers = await db.select().from(users);
       const isFirstAccount = allSystemUsers.length === 0;
-      const requestedVisitor = hasAnyRole(role, [ROLES.VISITEUR]);
+      const requestedVisitor = hasAnyRole(role, [ROLES.USER]);
       const requestedSuperAdmin = hasAnyRole(role, SUPER_ADMIN_ROLES);
 
       if (!requestedVisitor && !requestedSuperAdmin) {
@@ -434,7 +515,7 @@ async function startServer() {
         return;
       }
 
-      const effectiveRole = requestedSuperAdmin ? ROLES.SUPER_ADMIN : ROLES.VISITEUR;
+      const effectiveRole = requestedSuperAdmin ? ROLES.SUPER_ADMIN : ROLES.USER;
       const rights = rightsForRole(effectiveRole);
 
       const hash = await bcrypt.hash(password, 10);
@@ -449,7 +530,7 @@ async function startServer() {
         role: effectiveRole,
         rights,
         accessToken: hashSecret(accessToken),
-        arrondissement: effectiveRole === ROLES.VISITEUR ? null : (arrondissement || null),
+        arrondissement: effectiveRole === ROLES.USER ? null : (arrondissement || null),
         passwordHash: hash,
         loginAttempts: 0,
         isLocked: false,
@@ -514,7 +595,10 @@ async function startServer() {
         return;
       }
 
-      const usersFound = await db.select().from(users).where(eq(users.email, email));
+      const usersFound = await db.select().from(users).where(and(
+        eq(users.email, email),
+        eq(users.isActive, true),
+      ));
       if (usersFound.length === 0) {
         // Log unknown attempt
         await db.insert(auditLogs).values({
@@ -665,9 +749,7 @@ async function startServer() {
       await db.update(users).set({ loginAttempts: 0, lockExpiresAt: null }).where(eq(users.id, user.id));
 
       // 4. Les profils d'administration disposent d'une double vérification par mot de passe.
-      const requires2FA = (
-        hasAnyRole(user.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...ARRONDISSEMENT_ROLES])
-      ) && !accessToken;
+      const requires2FA = hasAnyRole(user.role, [...SUPER_ADMIN_ROLES, ...DGSS_ROLES, ...DSE_ROLES]) && !accessToken;
 
       if (requires2FA) {
         const otpCode = createOneTimeToken('OTP').slice(-6);
@@ -760,7 +842,10 @@ async function startServer() {
         return;
       }
 
-      const usersFound = await db.select().from(users).where(eq(users.email, email));
+      const usersFound = await db.select().from(users).where(and(
+        eq(users.email, email),
+        eq(users.isActive, true),
+      ));
       if (usersFound.length === 0) {
         res.status(404).json({ error: "Utilisateur non trouvé." });
         return;
@@ -862,7 +947,10 @@ async function startServer() {
         return;
       }
 
-      const usersFound = await db.select().from(users).where(eq(users.email, email));
+      const usersFound = await db.select().from(users).where(and(
+        eq(users.email, email),
+        eq(users.isActive, true),
+      ));
       if (usersFound.length === 0) {
         res.status(404).json({ error: "Aucun compte n'est associé à cette adresse email." });
         return;
@@ -1123,30 +1211,37 @@ async function startServer() {
       }
 
       const targetEtablissementId = etablissementId ? Number(etablissementId) : null;
-      if (hasAnyRole(role, LOCAL_SCHOOL_ROLES) && !targetEtablissementId) {
+      if (hasAnyRole(role, LOCAL_SCHOOL_ROLES) && (!targetEtablissementId || !Number.isInteger(targetEtablissementId))) {
         res.status(400).json({ error: "L'etablissement est obligatoire pour un compte scolaire." });
         return;
       }
-      if (hasAnyRole(req.user.role, [ROLES.PROVISEUR]) && targetEtablissementId !== req.user.etablissementId) {
-        res.status(403).json({ error: "Un proviseur ne peut creer un compte que pour son propre etablissement." });
-        return;
-      }
       if (targetEtablissementId) {
-        const targetEstablishments = await db.select({ arrondissement: etablissements.arrondissement })
+        const targetEstablishments = await db.select({
+          arrondissement: etablissements.arrondissement,
+          type: etablissements.type,
+          statut: etablissements.statut,
+        })
           .from(etablissements)
           .where(eq(etablissements.id, targetEtablissementId));
         if (targetEstablishments.length === 0) {
           res.status(400).json({ error: "L'etablissement rattache est introuvable." });
           return;
         }
-        if (hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) && targetEstablishments[0].arrondissement !== req.user.arrondissement) {
-          res.status(403).json({ error: "Un responsable d'arrondissement ne peut creer un compte que dans son arrondissement." });
+        if (hasAnyRole(role, LOCAL_SCHOOL_ROLES) &&
+            !isAgentRoleForEstablishment(role, targetEstablishments[0].type, targetEstablishments[0].statut)) {
+          res.status(400).json({ error: "Le profil Agent doit correspondre au type d'etablissement et le proviseur doit etre rattache a un etablissement secondaire public." });
           return;
         }
       }
-      if (hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) && arrondissement && arrondissement !== req.user.arrondissement) {
-        res.status(403).json({ error: "Le compte doit rester rattache a votre arrondissement." });
-        return;
+      if (hasAnyRole(role, LOCAL_SCHOOL_ROLES)) {
+        const activeUsers = await db.select({ role: users.role }).from(users).where(and(
+          eq(users.etablissementId, targetEtablissementId!),
+          eq(users.isActive, true),
+        ));
+        if (activeUsers.some((account) => hasAnyRole(account.role, LOCAL_SCHOOL_ROLES))) {
+          res.status(409).json({ error: "Un compte Agent actif existe deja pour cet etablissement. Un seul compte Agent est autorise par structure scolaire." });
+          return;
+        }
       }
 
       // 1. Email validation
@@ -1181,7 +1276,10 @@ async function startServer() {
 
       // 4. Check for duplicate email
       const existingUsers = await db.select().from(users).where(eq(users.email, email));
-      if (existingUsers.length > 0) {
+      const reusingDisabledSecretaryEmail = hasAnyRole(role, LOCAL_SCHOOL_ROLES) &&
+        existingUsers.length > 0 &&
+        existingUsers.every((account) => !account.isActive && isRetiredSecretaryRole(account.role));
+      if (existingUsers.length > 0 && !reusingDisabledSecretaryEmail) {
         res.status(400).json({ error: "Un utilisateur avec cette adresse email existe déjà." });
         return;
       }
@@ -1211,7 +1309,7 @@ async function startServer() {
         etablissementId: targetEtablissementId,
         rights,
         accessToken: hashSecret(accessToken),
-        arrondissement: hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) ? req.user.arrondissement || null : arrondissement || null,
+        arrondissement: arrondissement || null,
         passwordHash: hash,
         loginAttempts: 0,
         isLocked: false,
@@ -1240,6 +1338,10 @@ async function startServer() {
 
       res.json({ success: true, user: publicUser(createdUser[0]), simulatedEmail });
     } catch (error: any) {
+      if (isActiveAgentConflict(error)) {
+        res.status(409).json({ error: "Un compte Agent actif existe deja pour cet etablissement. Un seul compte Agent est autorise par structure scolaire." });
+        return;
+      }
       res.status(500).json({ error: error.message });
     }
   });
@@ -1426,36 +1528,45 @@ async function startServer() {
       }
 
       const { nom, prenom, telephone, role, arrondissement, etablissementId, password } = req.body;
-      const nextRole = role || target.role;
+      const nextRole = normalizeRole(role || target.role);
       if (!canCreateTargetRole(req.user.role, nextRole)) {
         res.status(403).json({ error: "Acces refuse : ce role ne peut pas etre attribue par votre profil." });
         return;
       }
       const nextEtablissementId = etablissementId === undefined ? target.etablissementId : (etablissementId ? Number(etablissementId) : null);
-      if (hasAnyRole(nextRole, LOCAL_SCHOOL_ROLES) && !nextEtablissementId) {
+      if (hasAnyRole(nextRole, LOCAL_SCHOOL_ROLES) && (!nextEtablissementId || !Number.isInteger(nextEtablissementId))) {
         res.status(400).json({ error: "L'etablissement est obligatoire pour un compte scolaire." });
         return;
       }
-      if (hasAnyRole(req.user.role, [ROLES.PROVISEUR]) && nextEtablissementId !== req.user.etablissementId) {
-        res.status(403).json({ error: "Un proviseur ne peut modifier que son etablissement." });
-        return;
-      }
       if (nextEtablissementId) {
-        const targetEstablishments = await db.select({ arrondissement: etablissements.arrondissement })
+        const targetEstablishments = await db.select({
+          arrondissement: etablissements.arrondissement,
+          type: etablissements.type,
+          statut: etablissements.statut,
+        })
           .from(etablissements)
           .where(eq(etablissements.id, nextEtablissementId));
         if (targetEstablishments.length === 0) {
           res.status(400).json({ error: "L'etablissement rattache est introuvable." });
           return;
         }
-        if (hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) && targetEstablishments[0].arrondissement !== req.user.arrondissement) {
-          res.status(403).json({ error: "Un responsable d'arrondissement ne peut gerer qu'un compte de son arrondissement." });
+        if (hasAnyRole(nextRole, LOCAL_SCHOOL_ROLES) &&
+            !isAgentRoleForEstablishment(nextRole, targetEstablishments[0].type, targetEstablishments[0].statut)) {
+          res.status(400).json({ error: "Le profil Agent doit correspondre au type d'etablissement et le proviseur doit etre rattache a un etablissement secondaire public." });
           return;
         }
       }
-      if (hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) && arrondissement && arrondissement !== req.user.arrondissement) {
-        res.status(403).json({ error: "Le compte doit rester rattache a votre arrondissement." });
-        return;
+      if (hasAnyRole(nextRole, LOCAL_SCHOOL_ROLES)) {
+        const activeUsers = await db.select({ id: users.id, role: users.role }).from(users).where(and(
+          eq(users.etablissementId, nextEtablissementId!),
+          eq(users.isActive, true),
+        ));
+        if (activeUsers.some((account) =>
+          account.id !== targetId && hasAnyRole(account.role, LOCAL_SCHOOL_ROLES)
+        )) {
+          res.status(409).json({ error: "Un compte Agent actif existe deja pour cet etablissement. Un seul compte Agent est autorise par structure scolaire." });
+          return;
+        }
       }
 
       const updates: any = {
@@ -1464,7 +1575,7 @@ async function startServer() {
         telephone: telephone ?? target.telephone,
         role: nextRole,
         rights: rightsForRole(nextRole),
-        arrondissement: hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES) ? req.user.arrondissement || target.arrondissement : arrondissement ?? target.arrondissement,
+        arrondissement: arrondissement ?? target.arrondissement,
         etablissementId: nextEtablissementId
       };
       if (password) {
@@ -1486,6 +1597,10 @@ async function startServer() {
       });
       res.json({ success: true, user: publicUser(updated[0]) });
     } catch (error: any) {
+      if (isActiveAgentConflict(error)) {
+        res.status(409).json({ error: "Un compte Agent actif existe deja pour cet etablissement. Un seul compte Agent est autorise par structure scolaire." });
+        return;
+      }
       res.status(500).json({ error: error.message });
     }
   });
@@ -2533,13 +2648,6 @@ async function startServer() {
         res.json(results);
         return;
       }
-      if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)) {
-        res.json(results.filter((communication) => {
-          const target = resolveCommunicationTarget(communication.ciblage);
-          return target.kind === 'all' || (target.kind === 'arrondissement' && target.arrondissement === req.user?.arrondissement);
-        }));
-        return;
-      }
       res.json([]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2909,231 +3017,7 @@ async function startServer() {
     }
   };
 
-  // Annual school reports: structured data with a secondary-school approval workflow.
-  app.get("/api/annual-reports", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...DGSS_ROLES, ...ARRONDISSEMENT_ROLES, ...LOCAL_SCHOOL_ROLES, ROLES.VISITEUR], "Acces refuse : vous n'avez pas acces aux rapports annuels.")) return;
-    try {
-      const reports = await db.select({
-        report: annualReports,
-        etablissement: etablissements
-      }).from(annualReports).leftJoin(etablissements, eq(annualReports.etablissementId, etablissements.id));
-
-      const visible = reports.filter((row) => {
-        if (hasAnyRole(req.user?.role, [ROLES.VISITEUR])) return row.report.statut === "Valide";
-        if (hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...DGSS_ROLES])) return true;
-        if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)) return Boolean(row.etablissement?.arrondissement === req.user?.arrondissement);
-        return Boolean(req.user?.etablissementId && row.report.etablissementId === req.user.etablissementId);
-      });
-      res.json(visible);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/annual-reports", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...LOCAL_SCHOOL_ROLES], "Acces refuse : vous n'avez pas acces aux rapports annuels.")) return;
-    try {
-      const { etablissementId, anneeScolaire, donnees, action = "save" } = req.body;
-      const targetId = Number(etablissementId);
-      if (!isValidSchoolYear(String(anneeScolaire))) {
-        res.status(400).json({ error: "L'annee scolaire doit etre comprise entre 2020-2021 et 2099-2100." });
-        return;
-      }
-      if (!targetId || !anneeScolaire || !donnees || typeof donnees !== "object") {
-        res.status(400).json({ error: "L'etablissement, l'annee scolaire et les donnees sont obligatoires." });
-        return;
-      }
-
-      const targetRows = await db.select().from(etablissements).where(eq(etablissements.id, targetId));
-      if (targetRows.length === 0) {
-        res.status(404).json({ error: "Etablissement introuvable." });
-        return;
-      }
-      const target = targetRows[0];
-      const isDse = hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES]);
-      const isLocal = hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES);
-      const isSecretary = hasAnyRole(req.user?.role, [ROLES.SECRETAIRE_ADMIN, ROLES.SECRETAIRE_ADMIN_LEGACY]);
-      const isProviseur = hasAnyRole(req.user?.role, [ROLES.PROVISEUR]);
-      if (isLocal && req.user?.etablissementId !== targetId) {
-        res.status(403).json({ error: "Vous ne pouvez renseigner que votre propre etablissement." });
-        return;
-      }
-      if (isLocal && !isDse && target.type === "Primaire" && !hasAnyRole(req.user?.role, [ROLES.DIRECTEUR_ECOLE])) {
-        res.status(403).json({ error: "Pour une ecole primaire, seul le Directeur d'ecole renseigne le rapport." });
-        return;
-      }
-      if (isSecretary && target.type !== "Secondaire") {
-        res.status(403).json({ error: "Le secretaire ne peut renseigner que les donnees d'un etablissement secondaire." });
-        return;
-      }
-      if (isProviseur && target.type !== "Secondaire") {
-        res.status(403).json({ error: "Le proviseur ne peut traiter que les donnees d'un etablissement secondaire." });
-        return;
-      }
-
-      const existing = await db.select().from(annualReports).where(and(
-        eq(annualReports.etablissementId, targetId),
-        eq(annualReports.anneeScolaire, String(anneeScolaire))
-      )).limit(1);
-      let statut = existing[0]?.statut || "Brouillon";
-      if (isLocal && existing[0] && !["Brouillon", "Rejete"].includes(existing[0].statut) && !(isProviseur && existing[0].statut === "Soumis au proviseur")) {
-        res.status(409).json({ error: "Ce rapport est deja transmis et ne peut plus etre modifie a ce stade du circuit." });
-        return;
-      }
-      if (action === "save" && isLocal && statut === "Rejete") {
-        statut = "Brouillon";
-      }
-      if (action === "submit") {
-        if (isSecretary) {
-          statut = "Soumis au proviseur";
-        } else {
-          statut = "Soumis au DSE";
-        }
-      }
-
-      const values = {
-        etablissementId: targetId,
-        anneeScolaire: String(anneeScolaire),
-        statut,
-        donnees,
-        createdById: existing[0]?.createdById || req.user?.id || null,
-        submittedById: action === "submit" ? req.user?.id || null : existing[0]?.submittedById || null,
-        submittedAt: action === "submit" ? new Date() : existing[0]?.submittedAt || null,
-        updatedAt: new Date()
-      };
-      const saved = existing.length > 0
-        ? await db.update(annualReports).set(values).where(eq(annualReports.id, existing[0].id)).returning()
-        : await db.insert(annualReports).values(values).returning();
-
-      await logAudit(req.user?.id, action === "submit" ? "SOUMISSION_RAPPORT_ANNUEL" : "SAUVEGARDE_RAPPORT_ANNUEL", "annual_reports", saved[0].id, { etablissementId: targetId, anneeScolaire, statut });
-      res.json({ success: true, report: saved[0] });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/annual-reports/:id/decision", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ROLES.PROVISEUR], "Acces refuse : profil non habilite.")) return;
-    try {
-      const reportId = Number(req.params.id);
-      const { decision } = req.body;
-      const rows = await db.select().from(annualReports).where(eq(annualReports.id, reportId));
-      if (rows.length === 0) {
-        res.status(404).json({ error: "Rapport annuel introuvable." });
-        return;
-      }
-      const report = rows[0];
-      const isDse = hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES]);
-      const isProviseur = hasAnyRole(req.user?.role, [ROLES.PROVISEUR]);
-      if (isProviseur && req.user?.etablissementId !== report.etablissementId) {
-        res.status(403).json({ error: "Vous ne pouvez valider que le rapport de votre etablissement." });
-        return;
-      }
-      if (!isDse && !isProviseur) {
-        res.status(403).json({ error: "Seul le proviseur ou le Directeur DSE peut traiter ce rapport." });
-        return;
-      }
-      if (decision === "approuver" && isProviseur) {
-        if (report.statut !== "Soumis au proviseur") {
-          res.status(409).json({ error: "Seul un rapport soumis au proviseur peut etre approuve." });
-          return;
-        }
-        const updated = await db.update(annualReports).set({ statut: "Soumis au DSE", updatedAt: new Date(), validatedById: req.user?.id || null }).where(eq(annualReports.id, reportId)).returning();
-        await logAudit(req.user?.id, "APPROBATION_PROVISEUR_RAPPORT", "annual_reports", reportId, {});
-        res.json({ success: true, report: updated[0] });
-        return;
-      }
-      if (!isDse) {
-        res.status(403).json({ error: "La validation finale est reservee au Directeur DSE." });
-        return;
-      }
-      const nextStatus = decision === "valider" ? "Valide" : decision === "rejeter" ? "Rejete" : null;
-      if (!nextStatus) {
-        res.status(400).json({ error: "Decision invalide." });
-        return;
-      }
-      if (report.statut !== "Soumis au DSE") {
-        res.status(409).json({ error: "La decision finale ne peut porter que sur un rapport soumis a la DSE." });
-        return;
-      }
-      const updated = await db.update(annualReports).set({ statut: nextStatus, updatedAt: new Date(), validatedById: req.user?.id || null, validatedAt: decision === "valider" ? new Date() : null }).where(eq(annualReports.id, reportId)).returning();
-      await logAudit(req.user?.id, decision === "valider" ? "VALIDATION_RAPPORT_ANNUEL" : "REJET_RAPPORT_ANNUEL", "annual_reports", reportId, { statut: nextStatus });
-      res.json({ success: true, report: updated[0] });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Common review workflow for establishment data modules.
-  app.post("/api/module-submissions/:module/:recordId/decision", requireAuth, async (req: AuthRequest, res) => {
-    if (!req.user || !hasAnyRole(req.user.role, [...DSE_ROLES, ...ARRONDISSEMENT_ROLES, ROLES.PROVISEUR])) {
-      res.status(403).json({ error: "Acces refuse : ce circuit de validation est reserve aux profils metier habilites." });
-      return;
-    }
-    if (req.params.module === 'effectifs' && hasAnyRole(req.user.role, [...DSE_ROLES, ...ARRONDISSEMENT_ROLES])) {
-      res.status(403).json({ error: "Le module Effectifs est en lecture seule pour les administrateurs." });
-      return;
-    }
-    try {
-      const { decision, commentaire } = req.body;
-      if (!['approuver', 'rejeter'].includes(decision)) {
-        res.status(400).json({ error: "Decision invalide." });
-        return;
-      }
-      const recordId = Number(req.params.recordId);
-      const rows = await db.select().from(moduleSubmissions).where(and(
-        eq(moduleSubmissions.module, req.params.module),
-        eq(moduleSubmissions.recordId, recordId)
-      )).limit(1);
-      if (rows.length === 0) {
-        res.status(404).json({ error: "Aucune transmission trouvee pour cette donnee." });
-        return;
-      }
-      const submission = rows[0];
-      const establishmentRows = await db.select().from(etablissements).where(eq(etablissements.id, submission.etablissementId)).limit(1);
-      const establishment = establishmentRows[0];
-      const isDse = hasAnyRole(req.user.role, DSE_ROLES);
-      const isProviseur = hasAnyRole(req.user.role, [ROLES.PROVISEUR]);
-      const isArrondissement = hasAnyRole(req.user.role, ARRONDISSEMENT_ROLES);
-
-      if (isProviseur && req.user.etablissementId !== submission.etablissementId) {
-        res.status(403).json({ error: "Vous ne pouvez traiter que les donnees de votre etablissement." });
-        return;
-      }
-      if (isArrondissement && (!establishment || establishment.arrondissement !== req.user.arrondissement)) {
-        res.status(403).json({ error: "Vous ne pouvez traiter que les donnees de votre arrondissement." });
-        return;
-      }
-      if (isArrondissement && decision === 'approuver') {
-        res.status(403).json({ error: "Le responsable d'arrondissement peut demander une correction, mais la validation appartient au responsable scolaire ou a la DSE." });
-        return;
-      }
-
-      let nextStatus: string;
-      if (decision === 'rejeter') {
-        nextStatus = 'A corriger';
-      } else if (isProviseur && submission.statut === 'Soumis au proviseur') {
-        nextStatus = 'Soumis au DSE';
-      } else if (isDse && submission.statut === 'Soumis au DSE') {
-        nextStatus = 'Valide';
-      } else {
-        res.status(409).json({ error: "Cette donnee ne se trouve pas dans un etat compatible avec votre decision." });
-        return;
-      }
-
-      const updated = await db.update(moduleSubmissions).set({
-        statut: nextStatus,
-        reviewedById: req.user.id || null,
-        reviewedAt: new Date(),
-        commentaire: commentaire || null,
-        updatedAt: new Date()
-      }).where(eq(moduleSubmissions.id, submission.id)).returning();
-      await logAudit(req.user.id, decision === 'approuver' ? 'VALIDATION_DONNEE_ETABLISSEMENT' : 'RETOUR_DONNEE_ETABLISSEMENT', req.params.module, recordId, { statut: nextStatus, commentaire });
-      res.json({ success: true, submission: updated[0] });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+  app.use(createAnnualReportsRouter(logAudit));
 
   app.use(createFacilitiesRouter(logAudit));
 
@@ -3481,7 +3365,7 @@ async function startServer() {
   // API route for complete dashboard statistics
   app.get("/api/dashboard/stats", requireAuth, async (req: AuthRequest, res) => {
     try {
-      if (hasAnyRole(req.user?.role, [ROLES.VISITEUR])) {
+      if (hasAnyRole(req.user?.role, [ROLES.USER])) {
         res.status(403).json({ error: "Le profil visiteur dispose uniquement de la consultation des etablissements et des rapports valides." });
         return;
       }
@@ -3501,19 +3385,15 @@ async function startServer() {
       let filteredWashes = washes;
       let filteredTices = tices;
 
-      const isArrResp = hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES);
       const isLocalActor = hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES);
-      const userArr = req.user?.arrondissement;
 
-      if (isArrResp || isLocalActor) {
+      if (isLocalActor) {
         filteredEtabs = filterEstablishmentsForRequester(etabs, req.user);
         const allowedEtabIds = new Set(filteredEtabs.map(e => e.id));
 
         filteredInfras = infras.filter(i => allowedEtabIds.has(i.etablissementId));
         filteredEffs = effs.filter(ef => allowedEtabIds.has(ef.etablissementId));
-        filteredConstrs = isArrResp && userArr
-          ? constrs.filter(c => c.arrondissement && c.arrondissement.toLowerCase() === userArr.toLowerCase())
-          : [];
+        filteredConstrs = [];
         filteredIncs = incs.filter(inc => inc.etablissementId && allowedEtabIds.has(inc.etablissementId));
         filteredWashes = washes.filter(w => w.etablissementId && allowedEtabIds.has(w.etablissementId));
         filteredTices = tices.filter(t => t.etablissementId && allowedEtabIds.has(t.etablissementId));

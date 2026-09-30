@@ -1,10 +1,11 @@
 import { queueAction } from './sync.ts';
+import type { ApiErrorResponse } from './shared-types.ts';
 
 function queuedResponse() {
   return new Response(JSON.stringify({
     error: 'Action mise en attente : la connexion au serveur est indisponible. Elle sera retentee automatiquement.',
     queued: true,
-  }), {
+  } satisfies ApiErrorResponse), {
     status: 503,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -46,8 +47,8 @@ export async function apiFetch(url: string, options: RequestInit = {}): Promise<
     }
     
     return response;
-  } catch (error: any) {
-    if (!isRead && (error.name === 'TypeError' || error.message.includes('Failed to fetch'))) {
+  } catch (error: unknown) {
+    if (!isRead && error instanceof TypeError) {
        queueAction({
         url,
         method: options.method as string,

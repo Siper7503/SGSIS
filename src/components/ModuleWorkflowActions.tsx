@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Check, Clock3, RotateCcw, Send } from 'lucide-react';
 import { apiFetch } from '../lib/api.ts';
 import { useAuth } from './AuthProvider.tsx';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, ROLES, hasAnyRole } from '../lib/roles.ts';
+import { DSE_ROLES, ROLES, hasAnyRole } from '../lib/roles.ts';
 
 interface ModuleWorkflowActionsProps {
   module: string;
@@ -18,9 +18,8 @@ export function ModuleWorkflowActions({ module, recordId, workflowStatus, onUpda
   const status = workflowStatus || (recordId ? 'Non soumis' : 'Non renseigne');
   const isDse = hasAnyRole(user?.role, DSE_ROLES);
   const isProviseur = hasAnyRole(user?.role, [ROLES.PROVISEUR]);
-  const isArrondissement = hasAnyRole(user?.role, ARRONDISSEMENT_ROLES);
   const canApprove = Boolean(recordId && ((isDse && status === 'Soumis au DSE') || (isProviseur && status === 'Soumis au proviseur')));
-  const canReject = Boolean(recordId && ((isDse && status === 'Soumis au DSE') || (isProviseur && status === 'Soumis au proviseur') || (isArrondissement && ['Soumis au proviseur', 'Soumis au DSE'].includes(status))));
+  const canReject = Boolean(recordId && ((isDse && status === 'Soumis au DSE') || (isProviseur && status === 'Soumis au proviseur')));
 
   const decide = async (decision: 'approuver' | 'rejeter') => {
     if (!token || !recordId || loading) return;

@@ -40,6 +40,10 @@ docker compose up --build
 
 The Docker Compose setup starts PostgreSQL, pushes the Drizzle schema, then runs the Express/Vite app.
 
+## Offline behavior
+
+Offline write requests are saved in browser storage and replayed automatically when connectivity returns. Successful responses remove an action from the queue; network failures and server errors keep it for a later retry, while client errors are removed rather than retried. Offline reads use the last successfully cached response for that URL, if available; otherwise they fail until the app is online.
+
 ## Production Build
 
 ```bash
@@ -69,3 +73,19 @@ npm run db:push
 ```
 
 Review the statements it prints before confirming, especially any `DROP`.
+
+Annual reports are unique by establishment, school year, and report type. Module submissions are unique by module and record. Before applying the schema to an existing database, check for rows that would conflict with these indexes:
+
+```sql
+SELECT etablissement_id, annee_scolaire, type_rapport, count(*)
+FROM annual_reports
+GROUP BY etablissement_id, annee_scolaire, type_rapport
+HAVING count(*) > 1;
+
+SELECT module, record_id, count(*)
+FROM module_submissions
+GROUP BY module, record_id
+HAVING count(*) > 1;
+```
+
+Reconcile any duplicate records deliberately before confirming the schema change; the application does not delete or merge existing business data automatically. Startup also reports duplicate keys and refuses to serve traffic until they are resolved.

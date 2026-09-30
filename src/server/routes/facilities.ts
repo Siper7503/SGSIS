@@ -3,7 +3,7 @@ import { db } from '../../db/index.ts';
 import { etablissements, incidents, tice, wash } from '../../db/schema.ts';
 import { eq } from 'drizzle-orm';
 import { requireAuth, AuthRequest } from '../../middleware/auth.ts';
-import { ARRONDISSEMENT_ROLES, DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../../lib/roles.ts';
+import { DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../../lib/roles.ts';
 import { attachModuleWorkflow, saveModuleWorkflow, isSchoolDataWriter } from '../module-workflow.ts';
 
 type AuditLogger = (
@@ -54,12 +54,6 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
       const results = await db.select().from(incidents).orderBy(incidents.dateSignalement);
       if (hasAnyRole(req.user?.role, [...DSE_ROLES, ...DGSS_ROLES, ...SUPER_ADMIN_ROLES])) {
         res.json(await attachModuleWorkflow(results, 'incidents'));
-      } else if (hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES) && req.user?.arrondissement) {
-        const scopedEstablishments = await db.select({ id: etablissements.id })
-          .from(etablissements)
-          .where(eq(etablissements.arrondissement, req.user.arrondissement));
-        const allowedIds = new Set(scopedEstablishments.map((etablissement) => etablissement.id));
-        res.json(await attachModuleWorkflow(results.filter((incident) => incident.etablissementId && allowedIds.has(incident.etablissementId)), 'incidents'));
       } else if (req.user?.etablissementId) {
         res.json(await attachModuleWorkflow(results.filter((incident) => incident.etablissementId === req.user?.etablissementId), 'incidents'));
       } else {
@@ -134,9 +128,7 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
         .leftJoin(etablissements, eq(wash.etablissementId, etablissements.id));
       const visible = hasAnyRole(req.user?.role, [...DSE_ROLES, ...DGSS_ROLES, ...SUPER_ADMIN_ROLES])
         ? rows
-        : rows.filter((row) => hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)
-          ? row.arrondissement === req.user?.arrondissement
-          : row.record.etablissementId === req.user?.etablissementId);
+        : rows.filter((row) => row.record.etablissementId === req.user?.etablissementId);
       res.json(await attachModuleWorkflow(visible.map((row) => ({ ...row.record, arrondissement: row.arrondissement })), 'wash'));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -201,9 +193,7 @@ export function createFacilitiesRouter(logAudit: AuditLogger): Router {
         .leftJoin(etablissements, eq(tice.etablissementId, etablissements.id));
       const visible = hasAnyRole(req.user?.role, [...DSE_ROLES, ...DGSS_ROLES, ...SUPER_ADMIN_ROLES])
         ? rows
-        : rows.filter((row) => hasAnyRole(req.user?.role, ARRONDISSEMENT_ROLES)
-          ? row.arrondissement === req.user?.arrondissement
-          : row.record.etablissementId === req.user?.etablissementId);
+        : rows.filter((row) => row.record.etablissementId === req.user?.etablissementId);
       res.json(await attachModuleWorkflow(visible.map((row) => ({ ...row.record, arrondissement: row.arrondissement })), 'tice'));
     } catch (error: any) {
       res.status(500).json({ error: error.message });

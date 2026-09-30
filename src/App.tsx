@@ -29,7 +29,7 @@ import { ROLES, hasAnyRole } from './lib/roles.ts';
 
 function AnnualReportsRoute() {
   const { user } = useAuth();
-  return hasAnyRole(user?.role, [ROLES.VISITEUR]) ? <PublicAnnualReports /> : <RapportsAnnuels />;
+  return hasAnyRole(user?.role, [ROLES.USER]) ? <PublicAnnualReports /> : <RapportsAnnuels />;
 }
 
 

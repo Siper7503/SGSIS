@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { MobilierForm } from '../components/MobilierForm.tsx';
 import { ModuleWorkflowActions } from '../components/ModuleWorkflowActions.tsx';
-import { ARRONDISSEMENT_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Mobilier() {
   const [data, setData] = useState<any[]>([]);
@@ -127,19 +127,11 @@ export default function Mobilier() {
 
   const isDse = hasAnyRole(user?.role, DSE_ROLES);
   const canWrite = isDse || hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
-  const canReview = hasAnyRole(user?.role, ARRONDISSEMENT_ROLES);
-  const isArrondissementResp = hasAnyRole(user?.role, ARRONDISSEMENT_ROLES);
 
   // Filter enriched data
   const filteredData = enrichedData.filter((item) => {
     const matchSearch = item.nomEtablissement.toLowerCase().includes(searchTerm.toLowerCase()) ||
                         item.arrondissement.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    if (isArrondissementResp) {
-      // Automatic filtering for the current user's arrondissement
-      return matchSearch && user?.arrondissement && item.arrondissement?.toLowerCase() === user.arrondissement.toLowerCase();
-    }
-    
     const matchArrondissement = selectedArrondissement === 'Tous' || item.arrondissement === selectedArrondissement;
     return matchSearch && matchArrondissement;
   });
@@ -249,15 +241,6 @@ export default function Mobilier() {
         </div>
       </div>
 
-      {isArrondissementResp && (
-        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-800 flex items-start gap-3 text-sm">
-          <Info className="h-5 w-5 text-emerald-600 mt-0.5 shrink-0" />
-          <div>
-            <span className="font-bold">Espace de consultation filtré :</span> Vous visualisez actuellement la synthèse mobilière et les besoins théoriques en mobilier des établissements de l'arrondissement de <strong className="font-extrabold">{user?.arrondissement}</strong>.
-          </div>
-        </div>
-      )}
-
       {/* Synthesis Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         
@@ -325,9 +308,7 @@ export default function Mobilier() {
         {/* Filters and Sorters */}
         <div className="flex flex-wrap gap-3.5 w-full md:w-auto items-center justify-end">
           
-          {/* Arrondissement filter */}
-          {!isArrondissementResp && (
-            <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2">
               <span className="text-xs font-semibold text-slate-500 whitespace-nowrap">Zone :</span>
               <select
                 value={selectedArrondissement}
@@ -339,8 +320,7 @@ export default function Mobilier() {
                   <option key={arr} value={arr}>{arr}</option>
                 ))}
               </select>
-            </div>
-          )}
+          </div>
 
           {/* Sorter */}
           <div className="flex items-center space-x-2">
@@ -393,7 +373,7 @@ export default function Mobilier() {
                 <th scope="col" className="px-3 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider">
                   Niveau d'Urgence
                 </th>
-                {(canWrite || canReview) && (
+                {canWrite && (
                   <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
                     <span className="sr-only">Actions</span>
                   </th>
@@ -403,13 +383,13 @@ export default function Mobilier() {
             <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan={canWrite || canReview ? 6 : 5} className="py-12 text-center text-sm text-slate-400">
+                  <td colSpan={canWrite ? 6 : 5} className="py-12 text-center text-sm text-slate-400">
                     Chargement de l'inventaire et des besoins mobiliers...
                   </td>
                 </tr>
               ) : sortedData.length === 0 ? (
                 <tr>
-                  <td colSpan={canWrite || canReview ? 6 : 5} className="py-12 text-center text-sm text-slate-400">
+                  <td colSpan={canWrite ? 6 : 5} className="py-12 text-center text-sm text-slate-400">
                     Aucun établissement trouvé pour ces filtres.
                   </td>
                 </tr>
@@ -489,7 +469,7 @@ export default function Mobilier() {
                     </td>
 
                     {/* Actions dropdown / buttons */}
-                    {(canWrite || canReview) && (
+                    {canWrite && (
                       <td className="py-4 pl-3 pr-4 text-right text-xs font-bold sm:pr-6">
                         <div className="flex justify-end gap-2.5">
                           {isDse && (

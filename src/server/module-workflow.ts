@@ -5,18 +5,32 @@ import { AuthRequest } from '../middleware/auth.ts';
 import { DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export type ModuleWorkflowAction = 'save' | 'submit';
+export type ModuleDecision = 'approuver' | 'rejeter';
 
 export function isSchoolDataWriter(role?: string | null): boolean {
   return hasAnyRole(role, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES]);
 }
 
-export function workflowStatusForSave(requester: AuthRequest['user'], action: ModuleWorkflowAction): string {
+export function workflowStatusForSave(requester: Pick<NonNullable<AuthRequest['user']>, 'role'> | null | undefined, action: ModuleWorkflowAction): string {
   if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) return 'Valide';
-  if (action === 'submit' && hasAnyRole(requester?.role, [ROLES.SECRETAIRE_ADMIN, ROLES.SECRETAIRE_ADMIN_LEGACY])) {
-    return 'Soumis au proviseur';
-  }
   if (action === 'submit') return 'Soumis au DSE';
   return 'Brouillon';
+}
+
+export function moduleDecisionStatus(
+  role: string | null | undefined,
+  currentStatus: string,
+  decision: ModuleDecision,
+): string | null {
+  if (!hasAnyRole(role, [...DSE_ROLES, ROLES.PROVISEUR])) return null;
+  if (decision === 'rejeter') return 'A corriger';
+  if (hasAnyRole(role, [ROLES.PROVISEUR]) && currentStatus === 'Soumis au proviseur') {
+    return 'Soumis au DSE';
+  }
+  if (hasAnyRole(role, DSE_ROLES) && currentStatus === 'Soumis au DSE') {
+    return 'Valide';
+  }
+  return null;
 }
 
 export async function saveModuleWorkflow(options: {
@@ -51,10 +65,16 @@ export async function saveModuleWorkflow(options: {
   if (existing.length > 0) {
     return (await db.update(moduleSubmissions).set(values).where(eq(moduleSubmissions.id, existing[0].id)).returning())[0];
   }
-  return (await db.insert(moduleSubmissions).values({ ...values, createdAt: new Date() }).returning())[0];
+  return (await db.insert(moduleSubmissions)
+    .values({ ...values, createdAt: new Date() })
+    .onConflictDoUpdate({
+      target: [moduleSubmissions.module, moduleSubmissions.recordId],
+      set: values,
+    })
+    .returning())[0];
 }
 
-export async function attachModuleWorkflow<T extends Record<string, any>>(rows: T[], module: string): Promise<(T & {
+export async function attachModuleWorkflow<T extends { id?: number | null }>(rows: T[], module: string): Promise<(T & {
   workflowStatus: string;
   workflowComment: string | null;
 })[]> {

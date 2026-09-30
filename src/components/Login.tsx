@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from './AuthProvider.tsx';
 import { ROLES } from '../lib/roles.ts';
+import { isSessionUser, type AuthApiResponse, type SimulatedEmail } from '../lib/shared-types.ts';
 import mairieLogo from '../../assets/mairie-ouagadougou-logo.jpg';
 
 const DISPOSABLE_DOMAINS = [
@@ -69,13 +70,13 @@ export function Login() {
   const [showRegPassword, setShowRegPassword] = useState(false);
 
   // Simulated Inbox state
-  const [simulatedEmails, setSimulatedEmails] = useState<any[]>([]);
-  const [selectedEmail, setSelectedEmail] = useState<any | null>(null);
+  const [simulatedEmails, setSimulatedEmails] = useState<SimulatedEmail[]>([]);
+  const [selectedEmail, setSelectedEmail] = useState<SimulatedEmail | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const rolesList = canCreateInitialSuperAdmin
-    ? [ROLES.SUPER_ADMIN, ROLES.VISITEUR]
-    : [ROLES.VISITEUR];
+    ? [ROLES.SUPER_ADMIN, ROLES.USER]
+    : [ROLES.USER];
 
   const openRegistration = async () => {
     setAuthMode('register');
@@ -87,10 +88,10 @@ export function Login() {
       const status = await response.json();
       const isFirstAccount = response.ok && !status.hasUsers;
       setCanCreateInitialSuperAdmin(isFirstAccount);
-      setRole(isFirstAccount ? ROLES.SUPER_ADMIN : ROLES.VISITEUR);
+      setRole(isFirstAccount ? ROLES.SUPER_ADMIN : ROLES.USER);
     } catch {
       setCanCreateInitialSuperAdmin(false);
-      setRole(ROLES.VISITEUR);
+      setRole(ROLES.USER);
     }
   };
 
@@ -170,10 +171,9 @@ export function Login() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, otpCode })
         });
-        const data = await res.json();
+        const data: AuthApiResponse = await res.json();
         if (!res.ok) throw new Error(data.error || "Code OTP incorrect ou expiré.");
-        
-        setSecureSession(data.token, data.user);
+        setSessionFromResponse(data);
         return;
       }
 
@@ -184,7 +184,7 @@ export function Login() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email })
         });
-        const data = await res.json();
+        const data: AuthApiResponse = await res.json();
         if (!res.ok) throw new Error(data.error || "Une erreur est survenue lors de la récupération.");
         
         addSimulatedEmail(data.simulatedEmail);
@@ -196,7 +196,7 @@ export function Login() {
 
       // 2. LOGIN MODE
       if (authMode === 'login') {
-        const bodyObj: any = { email };
+        const bodyObj: Record<string, string> = { email };
         if (loginMode === 'password') {
           bodyObj.password = password;
         } else {
@@ -208,7 +208,7 @@ export function Login() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(bodyObj)
         });
-        const data = await res.json();
+        const data: AuthApiResponse = await res.json();
         
         if (!res.ok) {
           throw new Error(data.error || "Échec de l'authentification.");
@@ -219,7 +219,7 @@ export function Login() {
           setStep('2fa');
           setSuccessMessage("Double facteur (2FA) requis. Un code OTP à 6 caractères a été envoyé dans le simulateur SMTP.");
         } else {
-          setSecureSession(data.token, data.user);
+          setSessionFromResponse(data);
         }
       } 
       
@@ -248,19 +248,19 @@ export function Login() {
             arrondissement: arrondissement || null 
           })
         });
-        const data = await res.json();
+        const data: AuthApiResponse = await res.json();
         if (!res.ok) throw new Error(data.error || "Erreur lors de la création du compte.");
         
         addSimulatedEmail(data.simulatedEmail);
         setSuccessMessage(`Félicitations, votre compte sécurisé a été créé ! Un jeton d'accès réutilisable (${data.accessToken}) vous a été envoyé par email. Veuillez vous connecter.`);
-        if (data.token && data.user) {
+        if (data.token && isSessionUser(data.user)) {
           setSecureSession(data.token, data.user);
           return;
         }
         setAuthMode('login');
       }
-    } catch (err: any) {
-      setError(err.message || "Une erreur est survenue lors de l'opération.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Une erreur est survenue lors de l'opération.");
     } finally {
       setLoading(false);
     }
@@ -276,7 +276,14 @@ export function Login() {
     }
   };
 
-  const addSimulatedEmail = (message: any) => {
+  const setSessionFromResponse = (response: AuthApiResponse) => {
+    if (!response.token || !isSessionUser(response.user)) {
+      throw new Error("La réponse d'authentification ne contient pas de session valide.");
+    }
+    setSecureSession(response.token, response.user);
+  };
+
+  const addSimulatedEmail = (message?: SimulatedEmail) => {
     if (!message) return;
     const normalizedMessage = {
       ...message,
@@ -708,7 +715,7 @@ export function Login() {
                               <ShieldCheck className="h-3 w-3 mr-1 text-cyan-700" />
                               Droit attribué d'office : super administration, gestion des accès et audit global
                             </span>
-                          ) : role === ROLES.VISITEUR ? (
+                          ) : role === ROLES.USER ? (
                             <span className="text-amber-700 font-semibold flex items-center">
                               <Info className="h-3 w-3 mr-1 text-amber-600" />
                               Droit attribué d'office : lecture et recherche uniquement

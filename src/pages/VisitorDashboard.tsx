@@ -3,23 +3,47 @@ import { Building2, FileText, MapPin, Search, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../components/AuthProvider.tsx';
 import { apiFetch } from '../lib/api.ts';
+import {
+  apiErrorMessage,
+  isAnnualReportListItem,
+  isEstablishmentRecord,
+  type AnnualReportListItem,
+  type EstablishmentRecord,
+} from '../lib/shared-types.ts';
 
-function reportTotal(report: any, type: string) {
-  const data = report?.donnees || {};
+const REPORT_TYPE_LABELS: Record<string, string> = {
+  entree: "Rapport d'entree",
+  fin_cycle: 'Rapport de fin de cycle',
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function numericValue(value: unknown): number {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function reportTotal(report: AnnualReportListItem['report'], type: string | undefined) {
+  const data = asRecord(report.donnees);
   if (type === 'Primaire') {
-    return Number(data.filles || 0) + Number(data.garcons || 0);
+    return numericValue(data.filles) + numericValue(data.garcons);
   }
 
-  const countCycle = (cycle: any) => (Object.values(cycle || {}) as any[]).reduce((total: number, value: any) => (
-    total + Number(value?.filles || 0) + Number(value?.garcons || 0)
-  ), 0);
+  const countCycle = (cycle: unknown) => Object.values(asRecord(cycle)).reduce<number>((total, value) => {
+    const summary = asRecord(value);
+    return total + numericValue(summary.filles) + numericValue(summary.garcons);
+  }, 0);
   return countCycle(data.premierCycle) + countCycle(data.secondCycle);
 }
 
 export default function VisitorDashboard() {
   const { token, user } = useAuth();
-  const [etablissements, setEtablissements] = useState<any[]>([]);
-  const [reports, setReports] = useState<any[]>([]);
+  const [etablissements, setEtablissements] = useState<EstablishmentRecord[]>([]);
+  const [reports, setReports] = useState<AnnualReportListItem[]>([]);
   const [search, setSearch] = useState('');
   const [type, setType] = useState('Tous');
   const [arrondissement, setArrondissement] = useState('Tous');
@@ -35,14 +59,20 @@ export default function VisitorDashboard() {
           apiFetch('/api/etablissements', { headers: { Authorization: `Bearer ${token}` } }),
           apiFetch('/api/annual-reports', { headers: { Authorization: `Bearer ${token}` } })
         ]);
-        const establishmentsData = await establishmentsResponse.json();
-        const reportsData = await reportsResponse.json();
-        if (!establishmentsResponse.ok) throw new Error(establishmentsData.error || 'Impossible de charger les etablissements.');
-        if (!reportsResponse.ok) throw new Error(reportsData.error || 'Impossible de charger les rapports annuels.');
-        setEtablissements(Array.isArray(establishmentsData) ? establishmentsData : []);
-        setReports(Array.isArray(reportsData) ? reportsData : []);
-      } catch (loadError: any) {
-        setError(loadError.message || 'Erreur de chargement.');
+        const establishmentsData: unknown = await establishmentsResponse.json();
+        const reportsData: unknown = await reportsResponse.json();
+        if (!establishmentsResponse.ok) throw new Error(apiErrorMessage(establishmentsData, 'Impossible de charger les etablissements.'));
+        if (!reportsResponse.ok) throw new Error(apiErrorMessage(reportsData, 'Impossible de charger les rapports annuels.'));
+        if (!Array.isArray(establishmentsData) || !establishmentsData.every(isEstablishmentRecord)) {
+          throw new Error('Le serveur a renvoyé une liste d’établissements invalide.');
+        }
+        if (!Array.isArray(reportsData) || !reportsData.every(isAnnualReportListItem)) {
+          throw new Error('Le serveur a renvoyé une liste de rapports invalide.');
+        }
+        setEtablissements(establishmentsData);
+        setReports(reportsData);
+      } catch (loadError: unknown) {
+        setError(loadError instanceof Error ? loadError.message : 'Erreur de chargement.');
       } finally {
         setLoading(false);
       }
@@ -126,7 +156,7 @@ export default function VisitorDashboard() {
           <Link to="/rapports-annuels" className="text-sm font-bold text-sky-700 hover:text-sky-900">Voir tous les rapports</Link>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-3">
-          {visibleReports.slice(0, 6).map((row) => { const establishment = row.etablissement; return <article key={row.report.id} className="rounded-xl border border-slate-200 p-4"><p className="font-bold text-slate-900">{establishment?.nom || 'Etablissement'}</p><p className="mt-1 text-xs text-slate-500">{row.report.anneeScolaire} | {establishment?.type || 'Type non renseigne'}</p><p className="mt-3 text-sm text-slate-700">Eleves declares : <strong>{reportTotal(row.report, establishment?.type)}</strong></p></article>; })}
+          {visibleReports.slice(0, 6).map((row) => { const establishment = row.etablissement; return <article key={row.report.id} className="rounded-xl border border-slate-200 p-4"><p className="font-bold text-slate-900">{establishment?.nom || 'Etablissement'}</p><p className="mt-1 text-xs text-slate-500">{row.report.anneeScolaire} | {REPORT_TYPE_LABELS[row.report.typeRapport || 'entree'] || "Rapport d'entree"} | {establishment?.type || 'Type non renseigne'}</p><p className="mt-3 text-sm text-slate-700">Eleves declares : <strong>{reportTotal(row.report, establishment?.type)}</strong></p></article>; })}
           {visibleReports.length === 0 && <p className="col-span-full rounded-xl bg-slate-50 p-5 text-center text-sm text-slate-500">Aucun rapport annuel valide n'est encore disponible.</p>}
         </div>
       </section>

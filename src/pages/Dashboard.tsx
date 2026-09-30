@@ -56,9 +56,56 @@ import {
   Pie, 
   Cell
 } from 'recharts';
-import { ARRONDISSEMENT_ROLES, BUSINESS_ADMIN_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { BUSINESS_ADMIN_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
 import VisitorDashboard from './VisitorDashboard.tsx';
 import * as XLSX from 'xlsx';
+import {
+  apiErrorMessage,
+  isAuditLogView,
+  isMyEstablishmentInfrastructureResponse,
+  isMyEstablishmentWashResponse,
+  isPublicUser,
+  isSystemHealthResponse,
+  type AuditLogView,
+  type AuthApiResponse,
+  type EstablishmentRecord,
+  type InfrastructureRecord,
+  type PublicUser,
+  type SystemHealthResponse,
+  type WashRecord,
+} from '../lib/shared-types.ts';
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function numericValue(value: unknown): number {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function stringProperty(value: unknown, key: string): string | undefined {
+  const property = asObject(value)[key];
+  return typeof property === 'string' ? property : undefined;
+}
+
+function schoolType(value: string): 'Primaire' | 'Secondaire' {
+  if (value !== 'Primaire' && value !== 'Secondaire') {
+    throw new Error(`Type d’établissement invalide : ${value}`);
+  }
+  return value;
+}
+
+function dateValue(value: Date | string | null | undefined): number {
+  if (!value) return 0;
+  return value instanceof Date ? value.getTime() : new Date(value).getTime();
+}
 
 interface SchoolSummary {
   ecoles: number;
@@ -172,9 +219,9 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
 
   // DSE Admin Specific States
-  const [adminUsers, setAdminUsers] = useState<any[]>([]);
-  const [adminAudits, setAdminAudits] = useState<any[]>([]);
-  const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [adminUsers, setAdminUsers] = useState<PublicUser[]>([]);
+  const [adminAudits, setAdminAudits] = useState<AuditLogView[]>([]);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(null);
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState<string | null>(null);
   const [adminTab, setAdminTab] = useState<'audits' | 'control'>('control');
@@ -196,13 +243,13 @@ export default function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
 
   const rolesList = [
+    ROLES.DIRECTEUR_DGSS,
     ROLES.DIRECTEUR_DSE,
-    ROLES.RESPONSABLE_ARR
   ];
 
   // Cantine & WASH Direct Saisie States
-  const [myEtab, setMyEtab] = useState<any>(null);
-  const [myWash, setMyWash] = useState<any>(null);
+  const [myEtab, setMyEtab] = useState<EstablishmentRecord | null>(null);
+  const [myWash, setMyWash] = useState<WashRecord | null>(null);
   const [cwLoading, setCwLoading] = useState(false);
   const [showCwModal, setShowCwModal] = useState(false);
   
@@ -226,11 +273,14 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data: unknown = await res.json();
+        if (!isMyEstablishmentWashResponse(data)) {
+          throw new Error('Le serveur a renvoyé des données WASH invalides.');
+        }
         if (data.etablissement) {
           setMyEtab(data.etablissement);
           setCwNom(data.etablissement.nom);
-          setCwType(data.etablissement.type);
+          setCwType(schoolType(data.etablissement.type));
           setCwArrondissement(data.etablissement.arrondissement);
         } else {
           setCwNom('');
@@ -257,8 +307,8 @@ export default function Dashboard() {
   };
 
   // Infrastructure Direct Saisie States
-  const [myInfraEtab, setMyInfraEtab] = useState<any>(null);
-  const [myInfra, setMyInfra] = useState<any>(null);
+  const [myInfraEtab, setMyInfraEtab] = useState<EstablishmentRecord | null>(null);
+  const [myInfra, setMyInfra] = useState<InfrastructureRecord | null>(null);
   const [infraLoading, setInfraLoading] = useState(false);
   const [showInfraModal, setShowInfraModal] = useState(false);
 
@@ -283,11 +333,14 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const data: unknown = await res.json();
+        if (!isMyEstablishmentInfrastructureResponse(data)) {
+          throw new Error('Le serveur a renvoyé des données d’infrastructure invalides.');
+        }
         if (data.etablissement) {
           setMyInfraEtab(data.etablissement);
           setInfraNom(data.etablissement.nom);
-          setInfraType(data.etablissement.type);
+          setInfraType(schoolType(data.etablissement.type));
           setInfraArrondissement(data.etablissement.arrondissement);
         } else {
           setInfraNom('');
@@ -297,8 +350,8 @@ export default function Dashboard() {
 
         if (data.infrastructure) {
           setMyInfra(data.infrastructure);
-          setInfraEtudes(data.infrastructure.batimentsEtudes?.total || 0);
-          setInfraAdmin(data.infrastructure.batimentsAdmin?.total || 0);
+          setInfraEtudes(numericValue(asObject(data.infrastructure.batimentsEtudes).total));
+          setInfraAdmin(numericValue(asObject(data.infrastructure.batimentsAdmin).total));
           setInfraLaboratoires(data.infrastructure.laboratoires || 0);
           setInfraInfirmerie(data.infrastructure.infirmerie || 0);
         } else {
@@ -346,11 +399,14 @@ export default function Dashboard() {
       });
 
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Erreur lors de la soumission");
+        const errData: unknown = await res.json();
+        throw new Error(apiErrorMessage(errData, "Erreur lors de la soumission"));
       }
 
-      const data = await res.json();
+      const data: unknown = await res.json();
+      if (!isMyEstablishmentInfrastructureResponse(data)) {
+        throw new Error('Le serveur a renvoyé des données d’infrastructure invalides.');
+      }
       setInfraSuccessMsg("Les données d'infrastructure de votre structure scolaire ont été enregistrées avec succès !");
       
       await fetchMyEtabInfra();
@@ -360,7 +416,7 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (statsRes.ok) {
-        const statsData = await statsRes.json();
+        const statsData: DashboardStats = await statsRes.json();
         setStats(statsData);
       }
 
@@ -368,8 +424,8 @@ export default function Dashboard() {
         setShowInfraModal(false);
         setInfraSuccessMsg(null);
       }, 2000);
-    } catch (err: any) {
-      setInfraErrorMsg(err.message || "Une erreur de connexion est survenue.");
+    } catch (err: unknown) {
+      setInfraErrorMsg(errorMessage(err, "Une erreur de connexion est survenue."));
     } finally {
       setInfraSubmitting(false);
     }
@@ -405,8 +461,8 @@ export default function Dashboard() {
       });
       
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Erreur lors de la soumission");
+        const errData: unknown = await res.json();
+        throw new Error(apiErrorMessage(errData, "Erreur lors de la soumission"));
       }
       
       await res.json();
@@ -419,7 +475,7 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (statsRes.ok) {
-        const statsData = await statsRes.json();
+        const statsData: DashboardStats = await statsRes.json();
         setStats(statsData);
       }
       
@@ -428,9 +484,9 @@ export default function Dashboard() {
         setCwSuccessMsg(null);
       }, 2000);
       
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setCwErrorMsg(err.message);
+      setCwErrorMsg(errorMessage(err, "Une erreur de connexion est survenue."));
     } finally {
       setCwSubmitting(false);
     }
@@ -452,20 +508,24 @@ export default function Dashboard() {
         throw new Error("Erreur lors de la récupération des données d'administration.");
       }
 
-      const usersData = await usersRes.json();
-      const auditsData = await auditsRes.json();
-
-      if (Array.isArray(usersData)) {
-        setAdminUsers(usersData);
+      const usersData: unknown = await usersRes.json();
+      const auditsData: unknown = await auditsRes.json();
+      if (!Array.isArray(usersData) || !usersData.every(isPublicUser)) {
+        throw new Error('Le serveur a renvoyé une liste utilisateur invalide.');
       }
-      if (Array.isArray(auditsData)) {
-        setAdminAudits(auditsData.sort((a, b) => new Date(b.log.createdAt).getTime() - new Date(a.log.createdAt).getTime()));
+      if (!Array.isArray(auditsData) || !auditsData.every(isAuditLogView)) {
+        throw new Error('Le serveur a renvoyé un journal d’audit invalide.');
       }
-      const healthData = await healthRes.json();
+      setAdminUsers(usersData);
+      setAdminAudits([...auditsData].sort((a, b) => dateValue(b.log.createdAt) - dateValue(a.log.createdAt)));
+      const healthData: unknown = await healthRes.json();
+      if (!isSystemHealthResponse(healthData)) {
+        throw new Error(apiErrorMessage(healthData, 'Le serveur a renvoyé un état de santé invalide.'));
+      }
       setSystemHealth(healthData);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setAdminError(err.message);
+      setAdminError(errorMessage(err, "Erreur lors du chargement des données d'administration."));
     } finally {
       setAdminLoading(false);
     }
@@ -482,7 +542,7 @@ export default function Dashboard() {
         return;
       }
 
-      if (hasAnyRole(user?.role, [ROLES.VISITEUR])) {
+      if (hasAnyRole(user?.role, [ROLES.USER])) {
         setLoading(false);
         return;
       }
@@ -493,7 +553,7 @@ export default function Dashboard() {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (!res.ok) throw new Error('Erreur de chargement des statistiques');
-        const data = await res.json();
+        const data: DashboardStats = await res.json();
         setStats(data);
 
         // Fetch local establishment if the user is a director or proviseur
@@ -502,9 +562,9 @@ export default function Dashboard() {
           await fetchMyEtabWash();
           await fetchMyEtabInfra();
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error(err);
-        setError(err.message);
+        setError(errorMessage(err, 'Erreur de chargement des statistiques.'));
       } finally {
         setLoading(false);
       }
@@ -522,12 +582,12 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Erreur lors du verrouillage de l'utilisateur");
+        const errData: unknown = await res.json();
+        throw new Error(apiErrorMessage(errData, "Erreur lors du verrouillage de l'utilisateur"));
       }
       await fetchAdminData();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e, 'Une erreur est survenue.'));
     } finally {
       setActionLoading(null);
     }
@@ -543,12 +603,12 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Erreur lors du déverrouillage de l'utilisateur");
+        const errData: unknown = await res.json();
+        throw new Error(apiErrorMessage(errData, "Erreur lors du déverrouillage de l'utilisateur"));
       }
       await fetchAdminData();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e, 'Une erreur est survenue.'));
     } finally {
       setActionLoading(null);
     }
@@ -567,12 +627,12 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Erreur lors de la suppression de l'utilisateur");
+        const errData: unknown = await res.json();
+        throw new Error(apiErrorMessage(errData, "Erreur lors de la suppression de l'utilisateur"));
       }
       await fetchAdminData();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e, 'Une erreur est survenue.'));
     } finally {
       setActionLoading(null);
     }
@@ -588,12 +648,12 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Erreur lors de la suppression du log");
+        const errData: unknown = await res.json();
+        throw new Error(apiErrorMessage(errData, "Erreur lors de la suppression du log"));
       }
       await fetchAdminData();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e, 'Une erreur est survenue.'));
     }
   };
 
@@ -609,12 +669,12 @@ export default function Dashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Erreur lors de la suppression des logs");
+        const errData: unknown = await res.json();
+        throw new Error(apiErrorMessage(errData, "Erreur lors de la suppression des logs"));
       }
       await fetchAdminData();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e, 'Une erreur est survenue.'));
     }
   };
 
@@ -644,7 +704,7 @@ export default function Dashboard() {
         })
       });
 
-      const d = await res.json();
+      const d: AuthApiResponse = await res.json();
       if (!res.ok) {
         throw new Error(d.error || "Une erreur est survenue lors de la création.");
       }
@@ -663,8 +723,8 @@ export default function Dashboard() {
       setShowAddForm(false);
       
       await fetchAdminData();
-    } catch (err: any) {
-      setFormError(err.message);
+    } catch (err: unknown) {
+      setFormError(errorMessage(err, "Impossible d'enregistrer l'utilisateur."));
     } finally {
       setSubmitting(false);
     }
@@ -681,7 +741,7 @@ export default function Dashboard() {
     );
   }
 
-  const isVisitor = hasAnyRole(user?.role, [ROLES.VISITEUR]);
+  const isVisitor = hasAnyRole(user?.role, [ROLES.USER]);
 
   if (isVisitor) {
     return <VisitorDashboard />;
@@ -697,9 +757,9 @@ export default function Dashboard() {
 
   // Identify Dashboard Interface Group
   const role = user?.role;
-  const isDseDirector = hasAnyRole(role, DSE_ROLES);
+  const isBusinessAdmin = hasAnyRole(role, BUSINESS_ADMIN_ROLES);
   const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
-  const isObserver = !isDseDirector && !isLocalActor;
+  const isObserver = !isBusinessAdmin && !isLocalActor;
 
   // Pre-process conformite data for PieChart
   const conformiteData = stats ? [
@@ -911,7 +971,7 @@ export default function Dashboard() {
     const filteredAudits = adminAudits.filter(row => {
       const action = (row.log.action || '').toLowerCase();
       const entityType = (row.log.entityType || '').toLowerCase();
-      const email = (row.user?.email || row.log.details?.email || '').toLowerCase();
+      const email = (row.user?.email || stringProperty(row.log.details, 'email') || '').toLowerCase();
       const fullName = `${row.user?.prenom || ''} ${row.user?.nom || ''}`.toLowerCase();
       const query = searchQuery.toLowerCase();
       return action.includes(query) || entityType.includes(query) || email.includes(query) || fullName.includes(query);
@@ -1280,8 +1340,8 @@ export default function Dashboard() {
                                   {u.arrondissement}
                                 </span>
                               )}
-                              <span className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full font-bold">
-                                Jeton Actuel: {u.accessToken || 'N/A'}
+                              <span className="text-[10px] text-slate-600 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-full font-bold">
+                                Jeton masqué
                               </span>
                             </div>
                           </div>
@@ -1371,7 +1431,7 @@ export default function Dashboard() {
                       <tr>
                         <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Date & Heure</th>
                         <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Utilisateur & Contact</th>
-                        <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">M. de Passe (Hash) & Jeton</th>
+                        <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Informations de sécurité</th>
                         <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Action</th>
                         <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Entité</th>
                         <th className="px-4 py-3 text-center text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</th>
@@ -1385,7 +1445,7 @@ export default function Dashboard() {
                             <td className="px-4 py-4 whitespace-nowrap text-xs text-slate-500 font-mono">
                               <div className="flex items-center gap-1">
                                 <Clock className="h-3 w-3 text-gray-400" />
-                                {new Date(row.log.createdAt).toLocaleString('fr-FR')}
+                                {new Date(dateValue(row.log.createdAt)).toLocaleString('fr-FR')}
                               </div>
                             </td>
                             <td className="px-4 py-4 text-xs">
@@ -1397,22 +1457,15 @@ export default function Dashboard() {
                                 </div>
                               ) : (
                                 <div className="space-y-0.5">
-                                  <div className="font-bold text-rose-600">{row.log.details?.createdBy || 'Inconnu / Système'}</div>
-                                  {row.log.details?.email && <div className="text-slate-400 font-mono">{row.log.details.email}</div>}
+                                  <div className="font-bold text-rose-600">{stringProperty(row.log.details, 'createdBy') || 'Inconnu / Système'}</div>
+                                  {stringProperty(row.log.details, 'email') && <div className="text-slate-400 font-mono">{stringProperty(row.log.details, 'email')}</div>}
                                 </div>
                               )}
                             </td>
                             <td className="px-4 py-4 text-xs font-mono max-w-xs">
                               {u ? (
                                 <div className="space-y-1">
-                                  <div className="text-[10px] text-slate-500 truncate" title={u.passwordHash || ''}>
-                                    <span className="font-bold text-slate-400">Hash:</span> {u.passwordHash ? u.passwordHash.substring(0, 15) + '...' : 'N/A'}
-                                  </div>
-                                  <div>
-                                    <span className="inline-block bg-indigo-50 border border-indigo-100 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded font-bold">
-                                      Jeton: {u.accessToken || 'N/A'}
-                                    </span>
-                                  </div>
+                                  <span className="text-slate-500">Identifiants masqués</span>
                                 </div>
                               ) : (
                                 <span className="text-slate-400 italic">Non applicable</span>
@@ -2114,41 +2167,14 @@ export default function Dashboard() {
   }
 
   // -------------------------------------------------------------
-  // VIEW 3: INTERFACE CONSULTATIVE (lambda / Responsable d'Arrondissement)
+  // VIEW 3: INTERFACE CONSULTATIVE (User)
   // -------------------------------------------------------------
   if (isObserver) {
-    const isArrResp = hasAnyRole(role, ARRONDISSEMENT_ROLES);
     return (
       <div className="space-y-8 animate-fade-in pb-10">
         
         {/* Consultative Header Alert Badge */}
-        {isArrResp ? (
-          <div className="bg-gradient-to-r from-teal-700 to-emerald-800 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
-            <div className="absolute right-0 bottom-0 opacity-10 translate-y-6 translate-x-6 scale-150">
-              <Building2 className="w-64 h-64" />
-            </div>
-            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-600 bg-opacity-40 text-emerald-100 border border-emerald-500 border-opacity-30 mb-4">
-              Espace Responsable d'Arrondissement • Pilotage Territorial
-            </span>
-            <h1 className="text-3xl font-extrabold tracking-tight">
-              Bonjour, {user?.prenom || ''} {user?.nom || ''} !
-            </h1>
-            <p className="mt-2 text-emerald-100 max-w-2xl text-sm leading-relaxed">
-              Bienvenue sur votre espace de pilotage territorial de l'arrondissement de <strong className="text-white">{user?.arrondissement || 'votre zone'}</strong>. Toutes les données du tableau de bord ci-dessous ont été automatiquement filtrées pour votre arrondissement.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-4 text-xs font-mono">
-              <div className="bg-white bg-opacity-10 backdrop-blur-sm px-3.5 py-2 rounded-lg border border-white border-opacity-10">
-                <span className="text-emerald-200">Rôle :</span> Responsable d'Arrondissement
-              </div>
-              {user?.arrondissement && (
-                <div className="bg-white bg-opacity-10 backdrop-blur-sm px-3.5 py-2 rounded-lg border border-white border-opacity-10">
-                  <span className="text-emerald-200">Arrondissement :</span> {user?.arrondissement}
-                </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-start gap-3">
               <div className="p-2.5 rounded-xl bg-slate-200 text-slate-700 shrink-0">
                 <Shield className="h-5.5 w-5.5" />
@@ -2169,8 +2195,7 @@ export default function Dashboard() {
               <Clock className="h-4 w-4 text-slate-400" />
               Actualisé le {new Date().toLocaleDateString('fr-FR')}
             </div>
-          </div>
-        )}
+        </div>
 
         {/* Global KPIs Panel (Safe Read-Only, no creation) */}
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">

@@ -6,7 +6,12 @@ import { Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Brief
 import { cn } from '../lib/utils.ts';
 import { getQueuedActions, syncData } from '../lib/sync.ts';
 import { apiFetch } from '../lib/api.ts';
-import { ARRONDISSEMENT_ROLES, DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, getRoleCategory, hasAnyRole } from '../lib/roles.ts';
+import { DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, getRoleCategory, hasAnyRole } from '../lib/roles.ts';
+import type { AuthApiResponse } from '../lib/shared-types.ts';
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Une erreur inattendue est survenue.';
+}
 
 const navigation = [
   { name: 'Tableau de bord', href: '/', icon: Home },
@@ -98,13 +103,14 @@ export function Layout() {
           telephone: profileTelephone
         })
       });
-      const result = await response.json();
+      const result: AuthApiResponse = await response.json();
       if (!response.ok) throw new Error(result.error || 'Impossible de modifier le profil.');
+      if (!result.user) throw new Error('La réponse du serveur ne contient pas le profil mis à jour.');
 
       setSecureSession(token, result.user);
       setProfileDetailsSuccess('Vos informations personnelles ont ete mises a jour.');
-    } catch (error: any) {
-      setProfileDetailsError(error.message);
+    } catch (error: unknown) {
+      setProfileDetailsError(errorMessage(error));
     } finally {
       setProfileDetailsSaving(false);
     }
@@ -131,15 +137,15 @@ export function Layout() {
         },
         body: JSON.stringify({ currentPassword, newPassword: profileNewPassword })
       });
-      const result = await response.json();
+      const result: AuthApiResponse = await response.json();
       if (!response.ok) throw new Error(result.error || 'Impossible de modifier le mot de passe.');
 
       setCurrentPassword('');
       setProfileNewPassword('');
       setProfilePasswordConfirmation('');
       setProfileSuccess('Votre mot de passe a ete modifie avec succes.');
-    } catch (error: any) {
-      setProfileError(error.message);
+    } catch (error: unknown) {
+      setProfileError(errorMessage(error));
     } finally {
       setProfileSaving(false);
     }
@@ -205,8 +211,7 @@ export function Layout() {
   const isDgssAdmin = hasAnyRole(role, DGSS_ROLES);
   const isDseAdmin = hasAnyRole(role, DSE_ROLES);
   const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
-  const isArrondissementResp = hasAnyRole(role, ARRONDISSEMENT_ROLES);
-  const isVisitor = hasAnyRole(role, [ROLES.VISITEUR]);
+  const isVisitor = hasAnyRole(role, [ROLES.USER]);
 
   if (isVisitor && !['/', '/etablissements', '/rapports-annuels'].includes(currentPath)) {
     return (
@@ -228,27 +233,6 @@ export function Layout() {
   }
 
   if (isLocalActor && !(hasAnyRole(role, [ROLES.PROVISEUR]) && currentPath === '/admin') && !['/', '/etablissements', '/effectifs', '/communications', '/infrastructures', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/rapports-annuels'].includes(currentPath)) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
-        <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
-          <div className="h-12 w-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <ShieldAlert className="h-6 w-6" />
-          </div>
-          <h2 className="text-lg font-bold text-gray-900">Accès Refusé</h2>
-          <p className="text-sm text-gray-500 mt-2">
-            Votre profil (<strong>{role}</strong>) n'est pas autorisé à accéder au module <code>{currentPath}</code>.
-          </p>
-          <div className="mt-6">
-            <Link to="/" className="inline-flex items-center justify-center rounded-xl bg-blue-600 text-white px-4 py-2 text-sm font-bold shadow-sm hover:bg-blue-700 transition">
-              Retour au tableau de bord
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (isArrondissementResp && !['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/carte', '/rapports', '/rapports-annuels'].includes(currentPath)) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -358,8 +342,7 @@ export function Layout() {
     const isDgss = hasAnyRole(userRole, DGSS_ROLES);
     const isDse = hasAnyRole(userRole, DSE_ROLES);
     const isLocal = hasAnyRole(userRole, LOCAL_SCHOOL_ROLES);
-    const isArrondissementResp = hasAnyRole(userRole, ARRONDISSEMENT_ROLES);
-    const isVisitor = hasAnyRole(userRole, [ROLES.VISITEUR]);
+    const isVisitor = hasAnyRole(userRole, [ROLES.USER]);
 
     // Filter navigation based on role privileges
     const filteredNavigation = navigation.filter((item) => {
@@ -376,14 +359,10 @@ export function Layout() {
         // Les responsables scolaires voient les modules de saisie de leur établissement.
         return ['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapports-annuels'].includes(item.href) || (hasAnyRole(userRole, [ROLES.PROVISEUR]) && item.href === '/admin');
       }
-      if (isArrondissementResp) {
-        return ['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/carte', '/rapports', '/rapports-annuels'].includes(item.href);
-      }
       if (isVisitor) {
         return ['/', '/etablissements', '/rapports-annuels'].includes(item.href);
       }
-      // Interface 3 (Observer/Lambda) sees everything except Admin (M8), Audit logs and predictions
-      return !['/admin', '/audit', '/predictions'].includes(item.href);
+      return false;
     });
 
     return (

@@ -3,26 +3,53 @@ import { FileText, Search, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../components/AuthProvider.tsx';
 import { apiFetch } from '../lib/api.ts';
 import { SCHOOL_YEARS } from '../lib/schoolYears.ts';
+import {
+  apiErrorMessage,
+  isAnnualReportListItem,
+  isEstablishmentRecord,
+  type AnnualReportListItem,
+  type EstablishmentRecord,
+} from '../lib/shared-types.ts';
 
-function sumCycle(cycle: any) {
-  return (Object.values(cycle || {}) as any[]).reduce((total: number, value: any) => total + Number(value?.filles || 0) + Number(value?.garcons || 0), 0);
+const REPORT_TYPE_LABELS: Record<string, string> = {
+  entree: "Rapport d'entree",
+  fin_cycle: 'Rapport de fin de cycle',
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
-function reportSummary(report: any, type: string) {
-  const data = report?.donnees || {};
+function numericValue(value: unknown): number {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function sumCycle(cycle: unknown): number {
+  return Object.values(asRecord(cycle)).reduce<number>((total, value) => {
+    const summary = asRecord(value);
+    return total + numericValue(summary.filles) + numericValue(summary.garcons);
+  }, 0);
+}
+
+function reportSummary(report: AnnualReportListItem['report'], type: string | undefined) {
+  const data = asRecord(report.donnees);
   if (type === 'Primaire') {
-    return `Classes : ${Number(data.classes || 0)} | Eleves : ${Number(data.filles || 0) + Number(data.garcons || 0)} | Enseignants : ${Number(data.enseignantsEnClasse || 0)}`;
+    return `Classes : ${numericValue(data.classes)} | Eleves : ${numericValue(data.filles) + numericValue(data.garcons)} | Enseignants : ${numericValue(data.enseignantsEnClasse)}`;
   }
-  const classes = (Object.values(data.classes || {}) as any[]).reduce((total: number, value: any) => total + Number(value || 0), 0);
+  const classes = Object.values(asRecord(data.classes)).reduce<number>((total, value) => total + numericValue(value), 0);
   const eleves = sumCycle(data.premierCycle) + sumCycle(data.secondCycle);
-  const enseignants = Number(data.enseignants?.hommes || 0) + Number(data.enseignants?.femmes || 0);
+  const enseignantsData = asRecord(data.enseignants);
+  const enseignants = numericValue(enseignantsData.hommes) + numericValue(enseignantsData.femmes);
   return `Classes : ${classes} | Eleves : ${eleves} | Enseignants : ${enseignants}`;
 }
 
 export default function PublicAnnualReports() {
   const { token } = useAuth();
-  const [reports, setReports] = useState<any[]>([]);
-  const [etablissements, setEtablissements] = useState<any[]>([]);
+  const [reports, setReports] = useState<AnnualReportListItem[]>([]);
+  const [etablissements, setEtablissements] = useState<EstablishmentRecord[]>([]);
   const [search, setSearch] = useState('');
   const [etablissementId, setEtablissementId] = useState('Tous');
   const [annee, setAnnee] = useState('Toutes');
@@ -35,13 +62,19 @@ export default function PublicAnnualReports() {
       apiFetch('/api/annual-reports', { headers: { Authorization: `Bearer ${token}` } }),
       apiFetch('/api/etablissements', { headers: { Authorization: `Bearer ${token}` } })
     ]).then(async ([reportsResponse, establishmentsResponse]) => {
-      const reportsData = await reportsResponse.json();
-      const establishmentsData = await establishmentsResponse.json();
-      if (!reportsResponse.ok) throw new Error(reportsData.error || 'Impossible de charger les rapports.');
-      if (!establishmentsResponse.ok) throw new Error(establishmentsData.error || 'Impossible de charger les etablissements.');
-      setReports(Array.isArray(reportsData) ? reportsData.filter((row) => row?.report?.statut === 'Valide') : []);
-      setEtablissements(Array.isArray(establishmentsData) ? establishmentsData : []);
-    }).catch((loadError: any) => setError(loadError.message || 'Erreur de chargement.')).finally(() => setLoading(false));
+      const reportsData: unknown = await reportsResponse.json();
+      const establishmentsData: unknown = await establishmentsResponse.json();
+      if (!reportsResponse.ok) throw new Error(apiErrorMessage(reportsData, 'Impossible de charger les rapports.'));
+      if (!establishmentsResponse.ok) throw new Error(apiErrorMessage(establishmentsData, 'Impossible de charger les etablissements.'));
+      if (!Array.isArray(reportsData) || !reportsData.every(isAnnualReportListItem)) {
+        throw new Error('Le serveur a renvoyé une liste de rapports invalide.');
+      }
+      if (!Array.isArray(establishmentsData) || !establishmentsData.every(isEstablishmentRecord)) {
+        throw new Error('Le serveur a renvoyé une liste d’établissements invalide.');
+      }
+      setReports(reportsData.filter((row) => row.report.statut === 'Valide'));
+      setEtablissements(establishmentsData);
+    }).catch((loadError: unknown) => setError(loadError instanceof Error ? loadError.message : 'Erreur de chargement.')).finally(() => setLoading(false));
   }, [token]);
 
   const filteredReports = reports.filter((row) => {
@@ -67,7 +100,7 @@ export default function PublicAnnualReports() {
         </div>
       </section>
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {filteredReports.map((row) => <article key={row.report.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-bold text-slate-900"><FileText className="h-4 w-4 text-emerald-600" />{row.etablissement?.nom || 'Etablissement'}</h2><p className="mt-1 text-xs text-slate-500">{row.etablissement?.type || 'Type non renseigne'} | {row.etablissement?.arrondissement || 'Arrondissement non renseigne'}</p></div><span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Valide</span></div><div className="mt-4 border-t border-slate-100 pt-3 text-sm text-slate-700"><p><strong>Annee scolaire :</strong> {row.report.anneeScolaire}</p><p className="mt-2">{reportSummary(row.report, row.etablissement?.type)}</p></div></article>)}
+        {filteredReports.map((row) => <article key={row.report.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 font-bold text-slate-900"><FileText className="h-4 w-4 text-emerald-600" />{row.etablissement?.nom || 'Etablissement'}</h2><p className="mt-1 text-xs text-slate-500">{row.etablissement?.type || 'Type non renseigne'} | {row.etablissement?.arrondissement || 'Arrondissement non renseigne'}</p></div><span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Valide</span></div><div className="mt-4 border-t border-slate-100 pt-3 text-sm text-slate-700"><p><strong>Annee scolaire :</strong> {row.report.anneeScolaire}</p><p><strong>Type :</strong> {REPORT_TYPE_LABELS[row.report.typeRapport || 'entree'] || "Rapport d'entree"}</p><p className="mt-2">{reportSummary(row.report, row.etablissement?.type)}</p></div></article>)}
         {filteredReports.length === 0 && <div className="col-span-full rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">Aucun rapport valide ne correspond aux filtres.</div>}
       </section>
     </div>

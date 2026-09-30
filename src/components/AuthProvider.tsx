@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { auth } from '../lib/firebase.ts';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { isSessionUser, type SessionUser } from '../lib/shared-types.ts';
 
 interface AuthContextType {
-  user: any;
+  user: SessionUser | null;
   loading: boolean;
   token: string | null;
-  setSecureSession: (token: string, user: any) => void;
+  setSecureSession: (token: string, user: SessionUser) => void;
   logout: () => Promise<void>;
 }
 
@@ -19,7 +20,7 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState<string | null>(null);
 
@@ -30,7 +31,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     if (savedToken && savedUserJson) {
       try {
-        const savedUser = JSON.parse(savedUserJson);
+        const savedUser: unknown = JSON.parse(savedUserJson);
+        if (!isSessionUser(savedUser)) {
+          throw new Error('Saved session user has an invalid shape');
+        }
         setUser(savedUser);
         setToken(savedToken);
         setLoading(false);
@@ -50,10 +54,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (currentUser) {
-        setUser(currentUser);
         try {
           const idToken = await currentUser.getIdToken();
           setToken(idToken);
+          setUser({ uid: currentUser.uid, email: currentUser.email || undefined });
           
           // Register/sync user with backend
           await fetch('/api/auth/login', {
@@ -75,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe;
   }, []);
 
-  const setSecureSession = (newToken: string, newUser: any) => {
+  const setSecureSession = (newToken: string, newUser: SessionUser) => {
     sessionStorage.setItem('secure_token', newToken);
     sessionStorage.setItem('secure_user', JSON.stringify(newUser));
     setUser(newUser);

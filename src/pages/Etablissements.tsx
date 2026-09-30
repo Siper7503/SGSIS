@@ -116,7 +116,7 @@ export default function Etablissements() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Établissements</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Gestion des fiches établissements Publics (308 primaires + 31 secondaires).
+            Gestion des fiches établissements Publics (Primaires et Sécondaires).
           </p>
         </div>
         {canWrite && (

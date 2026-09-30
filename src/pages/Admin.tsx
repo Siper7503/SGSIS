@@ -22,10 +22,23 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react';
-import { ADMIN_MANAGED_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SCHOOL_USER_ROLES, SUPER_ADMIN_ROLES, hasAnyRole, ROLES } from '../lib/roles.ts';
+import { ADMIN_MANAGED_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, SCHOOL_USER_ROLES, SUPER_ADMIN_ROLES, hasAnyRole, isAgentRoleForEstablishment, ROLES } from '../lib/roles.ts';
+import {
+  apiErrorMessage,
+  isEstablishmentRecord,
+  isPublicUser,
+  type AuthApiResponse,
+  type EstablishmentRecord,
+  type PublicUser,
+  type SimulatedEmail,
+} from '../lib/shared-types.ts';
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Une erreur inattendue est survenue.';
+}
 
 export default function Admin() {
-  const [data, setData] = useState<any[]>([]);
+  const [data, setData] = useState<PublicUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const { token, user } = useAuth();
@@ -45,26 +58,34 @@ export default function Admin() {
   const [submitting, setSubmitting] = useState(false);
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [newEtablissementId, setNewEtablissementId] = useState('');
-  const [etablissements, setEtablissements] = useState<any[]>([]);
-  const [simulatedEmail, setSimulatedEmail] = useState<any | null>(null);
+  const [etablissements, setEtablissements] = useState<EstablishmentRecord[]>([]);
+  const [simulatedEmail, setSimulatedEmail] = useState<SimulatedEmail | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<any | null>(null);
+  const [selectedUser, setSelectedUser] = useState<PublicUser | null>(null);
 
   const isSuperAdmin = hasAnyRole(user?.role, SUPER_ADMIN_ROLES);
   const isDseAdmin = hasAnyRole(user?.role, DSE_ROLES);
-  const isProviseur = hasAnyRole(user?.role, [ROLES.PROVISEUR]);
-  const canCreateUsers = isSuperAdmin || isDseAdmin || isProviseur;
+  const canCreateUsers = isSuperAdmin || isDseAdmin;
   const canManageSecurity = isSuperAdmin;
 
   const rolesList = isSuperAdmin
-    ? [...SUPER_ADMIN_ROLES, ...ADMIN_MANAGED_ROLES]
-    : isProviseur ? [ROLES.SECRETAIRE_ADMIN] : [...SCHOOL_USER_ROLES];
+    ? [...SUPER_ADMIN_ROLES, ...ADMIN_MANAGED_ROLES, ...SCHOOL_USER_ROLES]
+    : [...SCHOOL_USER_ROLES];
 
   useEffect(() => {
     setNewRole(rolesList[0] || ROLES.DIRECTEUR_ECOLE);
-  }, [isSuperAdmin, isDseAdmin, isProviseur]);
+  }, [isSuperAdmin, isDseAdmin]);
 
   const needsEstablishment = hasAnyRole(newRole, LOCAL_SCHOOL_ROLES);
+  const availableEstablishments = etablissements.filter((etablissement) =>
+    isAgentRoleForEstablishment(newRole, etablissement.type, etablissement.statut) &&
+    !data.some((account) =>
+      account.id !== editingUserId &&
+      account.isActive &&
+      account.etablissementId === etablissement.id &&
+      hasAnyRole(account.role, LOCAL_SCHOOL_ROLES)
+    )
+  );
 
   const fetchData = async () => {
     if (!token) return;
@@ -73,10 +94,12 @@ export default function Admin() {
       const res = await apiFetch('/api/users', {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const d = await res.json();
-      if (Array.isArray(d)) {
-        setData(d);
+      const payload: unknown = await res.json();
+      if (!res.ok) throw new Error(apiErrorMessage(payload, 'Impossible de charger les utilisateurs.'));
+      if (!Array.isArray(payload) || !payload.every(isPublicUser)) {
+        throw new Error('Le serveur a renvoyé une liste utilisateur invalide.');
       }
+      setData(payload);
     } catch (e) {
       console.error(e);
     } finally {
@@ -91,9 +114,15 @@ export default function Admin() {
   useEffect(() => {
     if (!token) return;
     apiFetch('/api/etablissements', { headers: { Authorization: `Bearer ${token}` } })
-      .then((res) => res.json())
-      .then((items) => setEtablissements(Array.isArray(items) ? [...items].sort((a, b) => Number(a.id) - Number(b.id)) : []))
-      .catch(console.error);
+      .then(async (response) => {
+        const payload: unknown = await response.json();
+        if (!response.ok) throw new Error(apiErrorMessage(payload, 'Impossible de charger les établissements.'));
+        if (!Array.isArray(payload) || !payload.every(isEstablishmentRecord)) {
+          throw new Error('Le serveur a renvoyé une liste d’établissements invalide.');
+        }
+        setEtablissements([...payload].sort((a, b) => a.id - b.id));
+      })
+      .catch((error: unknown) => console.error('Failed to load establishments:', error));
   }, [token]);
 
   const handleLockUser = async (userId: number) => {
@@ -105,12 +134,12 @@ export default function Admin() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Erreur lors du verrouillage de l'utilisateur");
+        const errData: unknown = await res.json();
+        throw new Error(apiErrorMessage(errData, "Erreur lors du verrouillage de l'utilisateur"));
       }
       await fetchData();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e));
     } finally {
       setActionLoading(null);
     }
@@ -125,18 +154,18 @@ export default function Admin() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Erreur lors du déverrouillage de l'utilisateur");
+        const errData: unknown = await res.json();
+        throw new Error(apiErrorMessage(errData, "Erreur lors du déverrouillage de l'utilisateur"));
       }
       await fetchData();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e));
     } finally {
       setActionLoading(null);
     }
   };
 
-  const startEditing = (account: any) => {
+  const startEditing = (account: PublicUser) => {
     setEditingUserId(account.id);
     setNewEmail(account.email || '');
     setNewNom(account.nom || '');
@@ -160,11 +189,11 @@ export default function Admin() {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.error || 'Erreur lors de la suppression.');
+      const d: unknown = await res.json();
+      if (!res.ok) throw new Error(apiErrorMessage(d, 'Erreur lors de la suppression.'));
       await fetchData();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e));
     } finally {
       setActionLoading(null);
     }
@@ -178,11 +207,11 @@ export default function Admin() {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Impossible de desactiver le compte.');
+      const result: unknown = await res.json();
+      if (!res.ok) throw new Error(apiErrorMessage(result, 'Impossible de desactiver le compte.'));
       await fetchData();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e));
     } finally {
       setActionLoading(null);
     }
@@ -196,11 +225,11 @@ export default function Admin() {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Impossible de reactiver le compte.');
+      const result: unknown = await res.json();
+      if (!res.ok) throw new Error(apiErrorMessage(result, 'Impossible de reactiver le compte.'));
       await fetchData();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(errorMessage(e));
     } finally {
       setActionLoading(null);
     }
@@ -228,11 +257,11 @@ export default function Admin() {
           password: newPassword,
           role: newRole,
           arrondissement: newArrondissement || null,
-          etablissementId: (isProviseur && user?.etablissementId) || newEtablissementId || null
+          etablissementId: newEtablissementId || null
         })
       });
 
-      const d = await res.json();
+      const d: AuthApiResponse = await res.json();
       if (!res.ok) {
         throw new Error(d.error || "Une erreur est survenue lors de la création de l'utilisateur.");
       }
@@ -265,8 +294,8 @@ export default function Admin() {
       
       // Refresh list
       await fetchData();
-    } catch (err: any) {
-      setFormError(err.message);
+    } catch (err: unknown) {
+      setFormError(errorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -460,13 +489,12 @@ export default function Admin() {
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Etablissement rattache</label>
                   <select
                     required
-                    value={isProviseur && user?.etablissementId ? String(user.etablissementId) : newEtablissementId}
-                    disabled={isProviseur}
+                    value={newEtablissementId}
                     onChange={(e) => setNewEtablissementId(e.target.value)}
-                    className="block w-full rounded-xl border border-slate-200 py-2.5 px-3 text-slate-950 sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 bg-white disabled:bg-slate-100"
+                    className="block w-full rounded-xl border border-slate-200 py-2.5 px-3 text-slate-950 sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 bg-white"
                   >
                     <option value="">Selectionner un etablissement</option>
-                    {etablissements.map((etab) => (
+                    {availableEstablishments.map((etab) => (
                       <option key={etab.id} value={etab.id}>{etab.nom} ({etab.arrondissement})</option>
                     ))}
                   </select>
