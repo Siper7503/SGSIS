@@ -1,1 +1,35 @@
 @import "tailwindcss";
+
+@layer components {
+  .annual-letterhead {
+    @apply grid min-h-36 grid-cols-[2fr_1fr_1.1fr] border border-slate-900 font-serif;
+  }
+
+  .annual-letterhead-cell {
+    @apply flex flex-col justify-center p-3 text-center;
+  }
+
+  .annual-letterhead-cell + .annual-letterhead-cell {
+    @apply border-l border-slate-900;
+  }
+
+  .annual-letterhead-left {
+    @apply gap-2 text-[10px] font-bold;
+  }
+
+  .annual-letterhead-center img {
+    @apply mx-auto block h-28 w-28 object-contain;
+  }
+
+  .annual-letterhead-right {
+    @apply gap-2 text-sm font-bold;
+  }
+
+  .annual-letterhead-right .annual-letterhead-country {
+    @apply mb-2 text-base;
+  }
+
+  .annual-report-date {
+    @apply mt-3 space-y-1 text-right text-xs text-slate-700;
+  }
+}

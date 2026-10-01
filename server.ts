@@ -35,17 +35,18 @@ const MAX_LOGIN_ATTEMPTS = 5;
 const AUTO_LOCK_MINUTES = 10;
 const AUTO_LOCK_MS = AUTO_LOCK_MINUTES * 60 * 1000;
 const ACTIVE_AGENT_INDEX = "users_one_active_agent_per_establishment_idx";
-const RETIRED_SECRETARY_ROLE_NAMES = new Set([
+const RETIRED_ROLE_NAMES = new Set([
   "secretaire administratif",
   "secretaire adminstratif",
   "sécretaire adminstratif",
   "sã©cretaire adminstratif",
   "secrétaire administratif",
   "secrã©taire administratif",
+  "responsable d'arrondissement",
 ]);
 
-function isRetiredSecretaryRole(role: string): boolean {
-  return RETIRED_SECRETARY_ROLE_NAMES.has(role.trim().toLowerCase());
+function isRetiredRole(role: string): boolean {
+  return RETIRED_ROLE_NAMES.has(role.trim().toLowerCase());
 }
 
 function isActiveAgentConflict(error: unknown): boolean {
@@ -244,7 +245,7 @@ async function ensureDatabaseShape() {
         lock_expires_at = null,
         otp_code = null,
         otp_expires_at = null
-    where lower(role) in (
+    where lower(trim(role)) in (
       'secretaire administratif',
       'secretaire adminstratif',
       'sécretaire adminstratif',
@@ -1276,10 +1277,10 @@ async function startServer() {
 
       // 4. Check for duplicate email
       const existingUsers = await db.select().from(users).where(eq(users.email, email));
-      const reusingDisabledSecretaryEmail = hasAnyRole(role, LOCAL_SCHOOL_ROLES) &&
+      const reusingDisabledRetiredRoleEmail = hasAnyRole(role, LOCAL_SCHOOL_ROLES) &&
         existingUsers.length > 0 &&
-        existingUsers.every((account) => !account.isActive && isRetiredSecretaryRole(account.role));
-      if (existingUsers.length > 0 && !reusingDisabledSecretaryEmail) {
+        existingUsers.every((account) => !account.isActive && isRetiredRole(account.role));
+      if (existingUsers.length > 0 && !reusingDisabledRetiredRoleEmail) {
         res.status(400).json({ error: "Un utilisateur avec cette adresse email existe déjà." });
         return;
       }

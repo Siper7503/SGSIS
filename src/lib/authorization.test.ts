@@ -10,7 +10,12 @@ test('account creation and management respect role hierarchy and school scope', 
   assert.equal(canCreateTargetRole(ROLES.DIRECTEUR_DSE, ROLES.USER), true);
   assert.equal(canCreateTargetRole(ROLES.PROVISEUR, ROLES.DIRECTEUR_ECOLE), false);
   assert.equal(canCreateTargetRole(ROLES.DIRECTEUR_DSE, "Secretaire Administratif"), false);
+  assert.equal(canCreateTargetRole(ROLES.SUPER_ADMIN, "Responsable d'Arrondissement"), false);
   assert.equal(canCreateTargetRole(ROLES.PROVISEUR, ROLES.SUPER_ADMIN), false);
+  assert.equal(canManageScopedTarget(
+    { role: ROLES.SUPER_ADMIN, etablissementId: null },
+    { role: "Responsable d'Arrondissement", etablissementId: null },
+  ), false);
   assert.equal(canManageScopedTarget(
     { role: ROLES.PROVISEUR, etablissementId: 7 },
     { role: ROLES.DIRECTEUR_ECOLE, etablissementId: 8 },
@@ -72,6 +77,7 @@ test('profiles map to the four requested actor categories and retired roles gain
   assert.equal(getRoleCategory(ROLES.PROVISEUR), 'Agent');
   assert.equal(getRoleCategory(ROLES.USER), 'User');
   assert.equal(getRoleCategory('Secretaire Administratif'), 'User');
+  assert.equal(getRoleCategory("Responsable d'Arrondissement"), 'User');
   assert.equal(normalizeRole('Administrateur DGSS'), ROLES.DIRECTEUR_DGSS);
   assert.equal(normalizeRole("Directeurs d'ecole"), ROLES.DIRECTEUR_ECOLE);
 });

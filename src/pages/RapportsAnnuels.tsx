@@ -6,6 +6,7 @@ import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { Check, Download, Eye, FileSpreadsheet, FileText, Printer, Save, Send, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { DEFAULT_SCHOOL_YEAR, SCHOOL_YEARS } from '../lib/schoolYears.ts';
+import mairieLogo from '../../assets/mairie-ouagadougou-logo.jpg';
 
 const CLASS_LEVELS = ['6e', '5e', '4e', '3e', '2ndeA', '2ndeC', '1ereA', '1ereD', 'TleA', 'TleD'];
 const CYCLE_LEVELS = ['6e', '5e', '4e', '3e'];
@@ -13,8 +14,8 @@ const SECOND_CYCLE_LEVELS = ['2ndeA', '2ndeC', '1ereA', '1ereD', 'TleA', 'TleD']
 const REPORT_TYPES = ['entree', 'fin_cycle'] as const;
 type ReportType = typeof REPORT_TYPES[number];
 const REPORT_TYPE_LABELS: Record<ReportType, string> = {
-  entree: "Rapport d'entree",
-  fin_cycle: 'Rapport de fin de cycle',
+  entree: 'Rapport de rentrée',
+  fin_cycle: 'Rapport de fin de cycle / sortie',
 };
 const SECONDARY_EXAMS = ['bepc', 'bep', 'cqp', 'bac'] as const;
 const SECONDARY_EXAM_LABELS: Record<typeof SECONDARY_EXAMS[number], string> = {
@@ -80,6 +81,26 @@ function normalizeReportData(type: string, source: any) {
 
 function reportTypeOf(row: any): ReportType {
   return REPORT_TYPES.includes(row?.report?.typeRapport) ? row.report.typeRapport : 'entree';
+}
+
+function formatSubmissionDate(value: unknown) {
+  if (!value) return 'Non transmise';
+  const date = value instanceof Date
+    ? new Date(value.getTime())
+    : new Date(value as string | number);
+  if (!Number.isFinite(date.getTime())) return 'Non transmise';
+  return date.toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'Africa/Ouagadougou',
+  });
+}
+
+function safeFileName(value: string) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'etablissement';
 }
 
 function sanitizeReportData(type: string, reportType: ReportType, source: any) {
@@ -168,6 +189,7 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
   const establishment = row?.etablissement || {};
   const report = row?.report || {};
   const reportType = reportTypeOf(row);
+  const submissionDate = formatSubmissionDate(report.submittedAt);
   const data = normalizeReportData(establishment.type || 'Primaire', report.donnees);
   const isPrimary = establishment.type === 'Primaire';
   const totalStudents = isPrimary
@@ -178,17 +200,26 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
 
   return (
     <div className="page mx-auto min-h-[297mm] w-[210mm] bg-white p-10 text-slate-950 shadow-sm">
-      <div className="flex items-start justify-between border-b-2 border-slate-900 pb-5">
-        <div>
-          <p className="text-xs font-black uppercase tracking-widest">Burkina Faso</p>
-          <p className="mt-1 text-[11px] italic text-slate-600">Unite - Progres - Justice</p>
-          <p className="mt-4 text-xs font-bold uppercase">Direction communale de l'education</p>
-          <p className="text-[11px] text-slate-600">DGSS / DSE - Suivi des rapports scolaires annuels</p>
+      <div className="annual-letterhead">
+        <div className="annual-letterhead-cell annual-letterhead-left">
+          <p>COMMUNE DE OUAGADOUGOU</p>
+          <p>MAIRIE</p>
+          <p>SECRÉTARIAT GÉNÉRAL</p>
+          <p>DIRECTION GÉNÉRALE DES SERVICES SOCIAUX</p>
+          <p>DIRECTION DES SERVICES DE L’ÉDUCATION</p>
         </div>
-        <div className="text-right text-[11px] text-slate-600">
-          <p>Ouagadougou, le {new Date().toLocaleDateString('fr-FR')}</p>
-          <p className="mt-2 font-mono">Ref: RAS-{report.id}-{reportType.toUpperCase()}</p>
+        <div className="annual-letterhead-cell annual-letterhead-center">
+          <img src={mairieLogo} alt="Blason de la Commune de Ouagadougou" />
         </div>
+        <div className="annual-letterhead-cell annual-letterhead-right">
+          <p className="annual-letterhead-country">BURKINA FASO</p>
+          <p>La Patrie ou la Mort,</p>
+          <p>Nous Vaincrons</p>
+        </div>
+      </div>
+      <div className="annual-report-date">
+        <p>Ouagadougou, le {submissionDate}</p>
+        <p>Réf. : RAS-{report.id}-{reportType.toUpperCase()}</p>
       </div>
 
       <div className="my-8 text-center">
@@ -197,17 +228,17 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
         <p className="mt-1 text-xs text-slate-500">Document transmis aux Directeurs DGSS et DSE pour examen administratif</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 text-xs">
+      <div className="grid grid-cols-2 gap-3 text-sm">
         <div className="rounded-lg border border-slate-300 p-3"><span className="font-bold">Etablissement : </span>{establishment.nom || 'Non renseigne'}</div>
         <div className="rounded-lg border border-slate-300 p-3"><span className="font-bold">Type : </span>{establishment.type || 'Non renseigne'}</div>
         <div className="rounded-lg border border-slate-300 p-3"><span className="font-bold">Arrondissement : </span>{establishment.arrondissement || 'Non renseigne'}</div>
         <div className="rounded-lg border border-slate-300 p-3"><span className="font-bold">Annee scolaire : </span>{report.anneeScolaire}</div>
         <div className="rounded-lg border border-slate-300 p-3"><span className="font-bold">Statut : </span>{report.statut}</div>
-        <div className="rounded-lg border border-slate-300 p-3"><span className="font-bold">Date de transmission : </span>{report.submittedAt ? new Date(report.submittedAt).toLocaleDateString('fr-FR') : 'Non transmise'}</div>
+        <div className="rounded-lg border border-slate-300 p-3"><span className="font-bold">Date de transmission : </span>{submissionDate}</div>
       </div>
 
       <h2 className="mt-8 border-b border-slate-300 pb-2 text-sm font-black uppercase">Synthese generale</h2>
-      <table className="mt-3 w-full border-collapse text-xs">
+      <table className="mt-3 w-full border-collapse text-sm">
         <thead><tr className="bg-slate-100"><th className="border border-slate-700 px-3 py-2 text-left">Indicateur</th><th className="border border-slate-700 px-3 py-2 text-left">Valeur</th></tr></thead>
         <tbody>
           <tr><td className="border border-slate-700 px-3 py-2 font-bold">Classes ouvertes</td><td className="border border-slate-700 px-3 py-2">{totalClasses}</td></tr>
@@ -217,7 +248,7 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
       </table>
 
       {isPrimary ? (
-        <table className="mt-6 w-full border-collapse text-xs">
+        <table className="mt-6 w-full border-collapse text-sm">
           <thead><tr className="bg-slate-100"><th className="border border-slate-700 px-3 py-2 text-left">Donnee primaire</th><th className="border border-slate-700 px-3 py-2">Filles</th><th className="border border-slate-700 px-3 py-2">Garcons</th><th className="border border-slate-700 px-3 py-2">Total / Taux</th></tr></thead>
           <tbody>
             <tr><td className="border border-slate-700 px-3 py-2 font-bold">Effectifs eleves</td><td className="border border-slate-700 px-3 py-2 text-center">{data.filles}</td><td className="border border-slate-700 px-3 py-2 text-center">{data.garcons}</td><td className="border border-slate-700 px-3 py-2 text-center">{totalStudents}</td></tr>
@@ -226,7 +257,7 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
         </table>
       ) : (
         <>
-          <table className="mt-6 w-full border-collapse text-xs">
+          <table className="mt-6 w-full border-collapse text-sm">
             <thead><tr className="bg-slate-100"><th className="border border-slate-700 px-3 py-2 text-left">Niveau</th><th className="border border-slate-700 px-3 py-2">Classes</th><th className="border border-slate-700 px-3 py-2">Filles</th><th className="border border-slate-700 px-3 py-2">Garcons</th></tr></thead>
             <tbody>
               {[...CYCLE_LEVELS.map((level) => ['premierCycle', level] as string[]), ...SECOND_CYCLE_LEVELS.map((level) => ['secondCycle', level] as string[])].map(([cycle, level]) => (
@@ -234,7 +265,7 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
               ))}
             </tbody>
           </table>
-          {reportType === 'fin_cycle' && <table className="mt-6 w-full border-collapse text-xs">
+          {reportType === 'fin_cycle' && <table className="mt-6 w-full border-collapse text-sm">
             <thead><tr className="bg-slate-100"><th className="border border-slate-700 px-3 py-2 text-left">Examen</th><th className="border border-slate-700 px-3 py-2">Candidats filles</th><th className="border border-slate-700 px-3 py-2">Candidats garcons</th><th className="border border-slate-700 px-3 py-2">Admis filles</th><th className="border border-slate-700 px-3 py-2">Admis garcons</th><th className="border border-slate-700 px-3 py-2">Taux</th></tr></thead>
             <tbody>
               {SECONDARY_EXAMS.map((key) => <tr key={key}><td className="border border-slate-700 px-3 py-2 font-bold">{SECONDARY_EXAM_LABELS[key]}</td><td className="border border-slate-700 px-3 py-2 text-center">{data[key].candidatsFilles}</td><td className="border border-slate-700 px-3 py-2 text-center">{data[key].candidatsGarcons}</td><td className="border border-slate-700 px-3 py-2 text-center">{data[key].admisFilles}</td><td className="border border-slate-700 px-3 py-2 text-center">{data[key].admisGarcons}</td><td className="border border-slate-700 px-3 py-2 text-center">{examRate(data[key])}</td></tr>)}
@@ -243,7 +274,7 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
         </>
       )}
 
-      <div className="mt-12 flex justify-between text-xs">
+      <div className="mt-12 flex justify-between text-sm">
         <div><p className="font-bold underline">Agent declarant</p><p className="mt-2 text-slate-500">Signature electronique</p></div>
         <div className="text-right"><p className="font-bold underline">Administration DGSS / DSE</p><p className="mt-2 text-slate-500">Visa et examen du rapport</p></div>
       </div>
@@ -377,7 +408,35 @@ export default function RapportsAnnuels() {
     XLSX.writeFile(workbook, `SGSIS_rapports_${anneeScolaire}.xlsx`);
   };
 
-  const printPdfReport = () => {
+  const exportExcelReport = (row: any) => {
+    const report = row.report;
+    const establishment = row.etablissement || {};
+    const reportType = reportTypeOf(row);
+    const reportData = normalizeReportData(establishment.type || 'Primaire', report.donnees);
+    const workbook = XLSX.utils.book_new();
+    const information = [
+      { Champ: 'Établissement', Valeur: establishment.nom || `Établissement #${report.etablissementId}` },
+      { Champ: 'Type d’établissement', Valeur: establishment.type || 'Non renseigné' },
+      { Champ: 'Arrondissement', Valeur: establishment.arrondissement || 'Non renseigné' },
+      { Champ: 'Année scolaire', Valeur: report.anneeScolaire },
+      { Champ: 'Type de rapport', Valeur: REPORT_TYPE_LABELS[reportType] },
+      { Champ: 'Statut', Valeur: report.statut },
+      { Champ: 'Date de transmission', Valeur: formatSubmissionDate(report.submittedAt) },
+    ];
+    const detailRows = Object.entries(flatten(reportData)).map(([indicator, value]) => ({
+      Indicateur: indicator,
+      Valeur: value,
+    }));
+
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(information), 'Identification');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detailRows), 'Données détaillées');
+    XLSX.writeFile(
+      workbook,
+      `SGSIS_${reportType}_${safeFileName(establishment.nom || '')}_${safeFileName(String(report.anneeScolaire || 'annee'))}.xlsx`,
+    );
+  };
+
+  const printPdfReport = async () => {
     const printable = document.getElementById('annual-report-pdf');
     if (!printable) return window.print();
     const printWindow = window.open('', '_blank', 'width=900,height=1200');
@@ -389,12 +448,65 @@ export default function RapportsAnnuels() {
           <title>Rapport scolaire annuel</title>
           <style>
             body { margin: 0; background: #f8fafc; font-family: Arial, sans-serif; color: #0f172a; }
-            .page { width: 210mm; min-height: 297mm; margin: 0 auto; background: white; padding: 18mm; box-sizing: border-box; }
+            @page { size: A4 portrait; margin: 14mm; }
+            * { box-sizing: border-box; }
+            .page { width: 100%; min-height: 0; margin: 0 auto; background: white; padding: 0; color: #0f172a; font-size: 11pt; line-height: 1.45; }
             table { width: 100%; border-collapse: collapse; }
-            th, td { border: 1px solid #334155; padding: 6px 8px; font-size: 11px; text-align: left; }
-            th { background: #f1f5f9; text-transform: uppercase; }
+            th, td { border: 1px solid #334155; padding: 2.4mm 2.5mm; font-size: 10pt; text-align: left; vertical-align: middle; }
+            th { background: #f1f5f9 !important; text-transform: uppercase; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             h1, h2, h3, p { margin: 0; }
-            @media print { body { background: white; } .page { margin: 0; box-shadow: none; } }
+            .annual-letterhead { display: grid; grid-template-columns: 2fr 1fr 1.1fr; border: 1px solid #111827; min-height: 38mm; font-family: "Times New Roman", serif; break-inside: avoid; }
+            .annual-letterhead-cell { display: flex; flex-direction: column; justify-content: center; padding: 2.5mm; text-align: center; }
+            .annual-letterhead-cell + .annual-letterhead-cell { border-left: 1px solid #111827; }
+            .annual-letterhead-left { gap: 1.5mm; font-size: 8pt; font-weight: 700; line-height: 1.35; }
+            .annual-letterhead-center img { display: block; width: 30mm; height: 30mm; object-fit: contain; margin: 0 auto; }
+            .annual-letterhead-right { gap: 2mm; font-size: 11pt; font-weight: 700; line-height: 1.35; }
+            .annual-letterhead-right .annual-letterhead-country { margin-bottom: 2mm; font-size: 13pt; }
+            .annual-report-date { margin-top: 3mm; text-align: right; font-size: 9pt; line-height: 1.6; }
+            .page .my-8 { margin-top: 10mm; margin-bottom: 9mm; }
+            .page .mt-1 { margin-top: 1mm; }
+            .page .mt-2 { margin-top: 2mm; }
+            .page .mt-3 { margin-top: 3mm; }
+            .page .mt-6 { margin-top: 5mm; }
+            .page .mt-8 { margin-top: 8mm; }
+            .page .mt-12 { margin-top: 9mm; }
+            .page .text-center { text-align: center; }
+            .page .text-right { text-align: right; }
+            .page .text-xl { font-size: 21pt; line-height: 1.25; }
+            .page .text-sm { font-size: 10.5pt; }
+            .page .text-xs { font-size: 10pt; }
+            .page .font-black { font-weight: 800; }
+            .page .font-bold { font-weight: 700; }
+            .page .uppercase { text-transform: uppercase; }
+            .page .tracking-wide { letter-spacing: .04em; }
+            .page .text-blue-800 { color: #1e40af; }
+            .page .text-slate-500 { color: #64748b; }
+            .page .grid { display: grid; }
+            .page .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .page .gap-3 { gap: 2.5mm; }
+            .page .rounded-lg { border-radius: 2mm; }
+            .page .border { border: 1px solid #cbd5e1; }
+            .page .border-b { border-bottom: 1px solid #cbd5e1; }
+            .page .border-slate-300 { border-color: #cbd5e1; }
+            .page .border-slate-700 { border-color: #334155; }
+            .page .p-3 { padding: 2.5mm; }
+            .page .px-3 { padding-left: 2mm; padding-right: 2mm; }
+            .page .py-2 { padding-top: 1.5mm; padding-bottom: 1.5mm; }
+            .page .pb-2 { padding-bottom: 2mm; }
+            .page .bg-slate-100 { background: #f1f5f9 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .page .w-full { width: 100%; }
+            .page table { margin-top: 3mm; }
+            .page .text-left { text-align: left; }
+            .page .text-center { text-align: center; }
+            .page tr { break-inside: avoid; }
+            .page h1, .page h2, .page h3 { break-after: avoid; }
+            .page .flex { display: flex; }
+            .page .justify-between { justify-content: space-between; }
+            .page .underline { text-decoration: underline; }
+            @media print {
+              html, body { width: 100%; min-width: 0; margin: 0; background: white; }
+              .page { margin: 0; box-shadow: none; }
+            }
           </style>
         </head>
         <body>${printable.innerHTML}</body>
@@ -402,6 +514,11 @@ export default function RapportsAnnuels() {
     `);
     printWindow.document.close();
     printWindow.focus();
+    await Promise.all(Array.from(printWindow.document.images, (image) => (
+      image.decode().then(() => undefined, () => undefined)
+    )));
+    await printWindow.document.fonts.ready;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     printWindow.print();
   };
 
@@ -470,8 +587,8 @@ export default function RapportsAnnuels() {
         <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="font-bold text-slate-900">Rapports PDF recus par les admins</h2>
-              <p className="text-xs text-slate-500">Dossiers transmis aux Directeurs DGSS et DSE pour ouverture, examen et telechargement PDF.</p>
+              <h2 className="font-bold text-slate-900">Rapports reçus par les administrateurs à examiner</h2>
+              <p className="text-xs text-slate-500">Chaque rapport transmis par une structure scolaire peut être téléchargé individuellement au format PDF ou Excel.</p>
             </div>
             <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">{reports.filter((row) => row.report?.statut !== 'Brouillon').length} recu(s)</span>
           </div>
@@ -492,7 +609,10 @@ export default function RapportsAnnuels() {
                     <Eye className="h-3 w-3" /> Ouvrir / examiner
                   </button>
                   <button onClick={() => { setPdfReport(row); setTimeout(printPdfReport, 100); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50">
-                    <Download className="h-3 w-3" /> PDF
+                    <Download className="h-3 w-3" /> Télécharger PDF
+                  </button>
+                  <button onClick={() => exportExcelReport(row)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-50">
+                    <FileSpreadsheet className="h-3 w-3" /> Télécharger Excel
                   </button>
                 </div>
               </div>
@@ -503,7 +623,7 @@ export default function RapportsAnnuels() {
 
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 px-5 py-4"><h2 className="font-bold text-slate-900">Dossiers transmis</h2></div>
-        <div className="divide-y divide-slate-100">{loading ? <p className="p-5 text-sm text-slate-500">Chargement...</p> : reports.length === 0 ? <p className="p-5 text-sm text-slate-500">Aucun rapport annuel.</p> : reports.map((row) => <div key={row.report.id} className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between"><div><p className="font-bold text-slate-900">{row.etablissement?.nom || `Etablissement #${row.report.etablissementId}`}</p><p className="text-xs text-slate-500">{row.report.anneeScolaire} · {row.etablissement?.type} · {row.etablissement?.arrondissement}</p></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{row.report.statut}</span>{isProviseur && row.report.statut === 'Soumis au proviseur' && <button onClick={() => decide(row.report.id, 'approuver')} className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white"><Check className="h-3 w-3" /> Approuver</button>}{isDse && row.report.statut === 'Soumis au DSE' && <><button onClick={() => decide(row.report.id, 'valider')} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"><Check className="h-3 w-3" /> Valider</button><button onClick={() => decide(row.report.id, 'rejeter')} className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white"><X className="h-3 w-3" /> Rejeter</button></>}</div></div>)}</div>
+        <div className="divide-y divide-slate-100">{loading ? <p className="p-5 text-sm text-slate-500">Chargement...</p> : reports.length === 0 ? <p className="p-5 text-sm text-slate-500">Aucun rapport annuel.</p> : reports.map((row) => <div key={row.report.id} className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between"><div><p className="font-bold text-slate-900">{row.etablissement?.nom || `Etablissement #${row.report.etablissementId}`}</p><p className="text-xs text-slate-500">{row.report.anneeScolaire} · {REPORT_TYPE_LABELS[reportTypeOf(row)]} · {row.etablissement?.type} · {row.etablissement?.arrondissement}</p></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{row.report.statut}</span><button onClick={() => { setPdfReport(row); setTimeout(printPdfReport, 100); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download className="h-3 w-3" /> PDF</button><button onClick={() => exportExcelReport(row)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-50"><FileSpreadsheet className="h-3 w-3" /> Excel</button>{isProviseur && row.report.statut === 'Soumis au proviseur' && <button onClick={() => decide(row.report.id, 'approuver')} className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white"><Check className="h-3 w-3" /> Approuver</button>}{isDse && row.report.statut === 'Soumis au DSE' && <><button onClick={() => decide(row.report.id, 'valider')} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"><Check className="h-3 w-3" /> Valider</button><button onClick={() => decide(row.report.id, 'rejeter')} className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white"><X className="h-3 w-3" /> Rejeter</button></>}</div></div>)}</div>
       </section>
 
       {pdfReport && (
@@ -520,6 +640,9 @@ export default function RapportsAnnuels() {
                 </button>
                 <button onClick={printPdfReport} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white">
                   <Download className="h-4 w-4" /> Telecharger PDF
+                </button>
+                <button onClick={() => exportExcelReport(pdfReport)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white">
+                  <FileSpreadsheet className="h-4 w-4" /> Télécharger Excel
                 </button>
                 <button onClick={() => setPdfReport(null)} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">
                   <X className="h-4 w-4" /> Fermer

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../components/AuthProvider.tsx';
 import { apiFetch } from '../lib/api.ts';
 import { Link } from 'react-router-dom';
@@ -57,6 +57,12 @@ import {
   Cell
 } from 'recharts';
 import { BUSINESS_ADMIN_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
+import {
+  annualReportYears,
+  isAnnualReportDashboardRow,
+  summarizeAnnualReports,
+  type AnnualReportDashboardRow,
+} from '../lib/annual-report-summary.ts';
 import VisitorDashboard from './VisitorDashboard.tsx';
 import * as XLSX from 'xlsx';
 import {
@@ -209,6 +215,222 @@ interface DashboardStats {
   annualSchoolReport?: AnnualSchoolReport;
 }
 
+function AnnualReportsDashboard({
+  reports,
+  loading,
+  error,
+  onRefresh,
+}: {
+  reports: AnnualReportDashboardRow[];
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+}) {
+  const years = useMemo(() => annualReportYears(reports), [reports]);
+  const [selectedYear, setSelectedYear] = useState('');
+  const schoolYear = years.includes(selectedYear) ? selectedYear : years[0] || '';
+  const summary = useMemo(
+    () => summarizeAnnualReports(reports, schoolYear),
+    [reports, schoolYear],
+  );
+  const format = (value: number) => value.toLocaleString('fr-FR');
+  const statusColors: Record<string, string> = {
+    Validé: '#10b981',
+    Rejeté: '#ef4444',
+    'Soumis au DSE': '#3b82f6',
+    'Soumis au proviseur': '#f59e0b',
+  };
+
+  return (
+    <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-wide text-emerald-800">
+            <FileText className="h-3.5 w-3.5" /> Rapports transmis par les structures
+          </div>
+          <h2 className="mt-3 text-xl font-extrabold text-slate-900">Synthèse des rapports scolaires</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Effectifs déclarés et résultats d’examen issus des rapports annuels transmis.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {years.length > 0 && (
+            <label className="text-xs font-semibold text-slate-600">
+              Année scolaire
+              <select
+                value={schoolYear}
+                onChange={(event) => setSelectedYear(event.target.value)}
+                className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              >
+                {years.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+            </label>
+          )}
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Actualiser
+          </button>
+          <Link to="/rapports-annuels" className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800">
+            Examiner les rapports <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+      </div>
+
+      {error && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div>}
+
+      {loading && reports.length === 0 ? (
+        <p className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">Chargement des rapports transmis…</p>
+      ) : !schoolYear ? (
+        <p className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">Aucun rapport transmis pour le moment. Les rapports apparaîtront ici après leur transmission par les structures scolaires.</p>
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {[
+              { label: 'Structures ayant transmis', value: summary.primarySchools + summary.secondarySchools, color: 'text-blue-700' },
+              { label: 'Rapports de rentrée', value: summary.entryReports, color: 'text-indigo-700' },
+              { label: 'Rapports de fin de cycle / sortie', value: summary.finalReports, color: 'text-violet-700' },
+              { label: 'À examiner', value: summary.awaitingReviewReports, color: 'text-amber-700' },
+              { label: 'Validés', value: summary.validatedReports, color: 'text-emerald-700' },
+            ].map((item) => (
+              <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                <p className="text-xs font-semibold text-slate-500">{item.label}</p>
+                <p className={`mt-1 text-2xl font-black ${item.color}`}>{format(item.value)}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-2">
+            <div className="rounded-xl border border-slate-100 p-4">
+              <h3 className="text-sm font-bold text-slate-900">Structures ayant transmis par niveau</h3>
+              <p className="mt-1 text-xs text-slate-500">Nombre d’établissements distincts par type de rapport.</p>
+              <div className="mt-3 h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={summary.schoolTypeData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="type" />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip formatter={(value) => format(Number(value))} />
+                    <Legend />
+                    <Bar name="Rentrée" dataKey="rentree" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                    <Bar name="Fin de cycle / sortie" dataKey="finCycle" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="text-xs text-slate-600">
+                Primaire : <strong>{format(summary.primarySchools)}</strong> structures · Secondaire : <strong>{format(summary.secondarySchools)}</strong> structures
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-slate-100 p-4">
+              <h3 className="text-sm font-bold text-slate-900">État du circuit de validation</h3>
+              <p className="mt-1 text-xs text-slate-500">Répartition des rapports transmis pour l’année scolaire sélectionnée.</p>
+              {summary.statusData.length === 0 ? (
+                <p className="mt-12 text-center text-sm text-slate-500">Aucun rapport transmis pour cette année.</p>
+              ) : (
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={summary.statusData} dataKey="count" nameKey="status" cx="50%" cy="50%" outerRadius={85} label>
+                        {summary.statusData.map((item) => (
+                          <Cell key={item.status} fill={statusColors[item.status] || '#64748b'} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => format(Number(value))} />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-xl border border-slate-100">
+            <div className="p-4 pb-2">
+              <h3 className="text-sm font-bold text-slate-900">Effectifs déclarés dans les rapports de rentrée</h3>
+              <p className="mt-1 text-xs text-slate-500">Les dossiers rejetés sont exclus de cette consolidation.</p>
+            </div>
+            <table className="w-full min-w-[680px] border-collapse text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase text-slate-600">
+                <tr>
+                  <th className="px-4 py-3">Niveau</th>
+                  <th className="px-4 py-3 text-right">Structures</th>
+                  <th className="px-4 py-3 text-right">Classes</th>
+                  <th className="px-4 py-3 text-right">Enseignants</th>
+                  <th className="px-4 py-3 text-right">Filles</th>
+                  <th className="px-4 py-3 text-right">Garçons</th>
+                  <th className="px-4 py-3 text-right">Élèves</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {summary.enrollmentByType.map((item) => {
+                  const schools = summary.schoolTypeData.find((entry) => entry.type === item.type)?.rentree || 0;
+                  return (
+                    <tr key={item.type}>
+                      <td className="px-4 py-3 font-semibold">{item.type}</td>
+                      <td className="px-4 py-3 text-right">{format(schools)}</td>
+                      <td className="px-4 py-3 text-right">{format(item.classes)}</td>
+                      <td className="px-4 py-3 text-right">{format(item.teachers)}</td>
+                      <td className="px-4 py-3 text-right">{format(item.girls)}</td>
+                      <td className="px-4 py-3 text-right">{format(item.boys)}</td>
+                      <td className="px-4 py-3 text-right font-bold">{format(item.students)}</td>
+                    </tr>
+                  );
+                })}
+                <tr className="bg-slate-50 font-bold">
+                  <td className="px-4 py-3">Total</td>
+                  <td className="px-4 py-3 text-right">{format(summary.schoolTypeData.reduce((total, item) => total + item.rentree, 0))}</td>
+                  <td className="px-4 py-3 text-right">{format(summary.enrollment.classes)}</td>
+                  <td className="px-4 py-3 text-right">{format(summary.enrollment.teachers)}</td>
+                  <td className="px-4 py-3 text-right">{format(summary.enrollment.girls)}</td>
+                  <td className="px-4 py-3 text-right">{format(summary.enrollment.boys)}</td>
+                  <td className="px-4 py-3 text-right">{format(summary.enrollment.students)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="rounded-xl border border-slate-100 p-4">
+            <h3 className="text-sm font-bold text-slate-900">Résultats finaux des examens</h3>
+            <p className="mt-1 text-xs text-slate-500">Seuls les rapports de fin de cycle validés sont pris en compte.</p>
+            {summary.examResults.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-500">Aucun résultat final validé pour cette année scolaire.</p>
+            ) : (
+              <div className="mt-3 grid gap-4 xl:grid-cols-[2fr_1fr]">
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={summary.examResults}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="exam" />
+                      <YAxis allowDecimals={false} />
+                      <Tooltip formatter={(value) => format(Number(value))} />
+                      <Legend />
+                      <Bar name="Candidats / présents" dataKey="candidates" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
+                      <Bar name="Admis" dataKey="admitted" fill="#10b981" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="space-y-2">
+                  {summary.examResults.map((exam) => (
+                    <div key={exam.exam} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                      <span className="font-semibold text-slate-700">{exam.exam}</span>
+                      <span className="font-bold text-emerald-700">{exam.rate}% admis</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function Dashboard() {
   const { token, user } = useAuth();
   const isTechnicalSuperAdmin = hasAnyRole(user?.role, SUPER_ADMIN_ROLES);
@@ -225,6 +447,9 @@ export default function Dashboard() {
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState<string | null>(null);
   const [adminTab, setAdminTab] = useState<'audits' | 'control'>('control');
+  const [annualReports, setAnnualReports] = useState<AnnualReportDashboardRow[]>([]);
+  const [annualReportsLoading, setAnnualReportsLoading] = useState(false);
+  const [annualReportsError, setAnnualReportsError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [actionLoading, setActionLoading] = useState<number | null>(null);
 
@@ -492,6 +717,30 @@ export default function Dashboard() {
     }
   };
 
+  const fetchAnnualReports = async () => {
+    if (!token) return;
+    try {
+      setAnnualReportsLoading(true);
+      setAnnualReportsError(null);
+      const response = await apiFetch('/api/annual-reports', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        throw new Error('Impossible de récupérer les rapports annuels transmis.');
+      }
+      const payload: unknown = await response.json();
+      if (!Array.isArray(payload) || !payload.every(isAnnualReportDashboardRow)) {
+        throw new Error('Le serveur a renvoyé une liste de rapports annuels invalide.');
+      }
+      setAnnualReports(payload);
+    } catch (err: unknown) {
+      console.error(err);
+      setAnnualReportsError(errorMessage(err, 'Erreur lors du chargement des rapports annuels.'));
+    } finally {
+      setAnnualReportsLoading(false);
+    }
+  };
+
   // Fetching Admin Data
   const fetchAdminData = async () => {
     if (!token) return;
@@ -537,7 +786,7 @@ export default function Dashboard() {
 
       if (isTechnicalSuperAdmin) {
         setLoading(true);
-        await fetchAdminData();
+        await Promise.all([fetchAdminData(), fetchAnnualReports()]);
         setLoading(false);
         return;
       }
@@ -545,6 +794,10 @@ export default function Dashboard() {
       if (hasAnyRole(user?.role, [ROLES.USER])) {
         setLoading(false);
         return;
+      }
+
+      if (hasAnyRole(user?.role, BUSINESS_ADMIN_ROLES)) {
+        void fetchAnnualReports();
       }
 
       try {
@@ -907,6 +1160,12 @@ export default function Dashboard() {
           <h1 className="mt-2 text-3xl font-black">Centre de supervision</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-300">Contrôle global des comptes, des rôles, des blocages de sécurité et de la traçabilité du système.</p>
         </div>
+        <AnnualReportsDashboard
+          reports={annualReports}
+          loading={annualReportsLoading}
+          error={annualReportsError}
+          onRefresh={() => void fetchAnnualReports()}
+        />
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <Users className="h-5 w-5 text-blue-600" />
@@ -2379,6 +2638,15 @@ export default function Dashboard() {
           </span>
         </div>
       </div>
+
+      {isBusinessAdmin && (
+        <AnnualReportsDashboard
+          reports={annualReports}
+          loading={annualReportsLoading}
+          error={annualReportsError}
+          onRefresh={() => void fetchAnnualReports()}
+        />
+      )}
 
       {annualReport && (
         <section id="annual-school-report" className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
