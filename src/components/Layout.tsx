@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthProvider.tsx';
 import { Login } from './Login.tsx';
-import { Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Briefcase, Map as MapIcon, Sparkles, Menu, X, WifiOff, AlertTriangle, Droplets, Monitor, ShieldAlert, UserCircle, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Briefcase, Map as MapIcon, Sparkles, Menu, X, WifiOff, AlertTriangle, Droplets, Monitor, ShieldAlert, UserCircle, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { getQueuedActions, syncData } from '../lib/sync.ts';
 import { apiFetch } from '../lib/api.ts';
@@ -36,6 +36,7 @@ const navigation = [
 export function Layout() {
   const { user, loading, token, logout, setSecureSession } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [pendingSyncs, setPendingSyncs] = useState(getQueuedActions().length);
@@ -82,6 +83,14 @@ export function Layout() {
     setProfileTelephone(user?.telephone || '');
     setShowProfileNewPassword(false);
     setShowProfilePasswordConfirmation(false);
+  };
+
+  const handleBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    navigate('/');
   };
 
   const handleProfileDetailsChange = async (event: React.FormEvent) => {
@@ -509,6 +518,15 @@ export function Layout() {
 
         <main className="flex-1 overflow-y-auto focus:outline-none">
           <div className="py-6 px-4 sm:px-6 lg:px-8">
+            <button
+              type="button"
+              onClick={handleBack}
+              className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              aria-label="Revenir à la page précédente"
+              title="Retour"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
             <Outlet />
           </div>
         </main>
