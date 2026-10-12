@@ -8,6 +8,7 @@ import { getQueuedActions, syncData } from '../lib/sync.ts';
 import { apiFetch } from '../lib/api.ts';
 import { DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, getRoleCategory, hasAnyRole } from '../lib/roles.ts';
 import type { AuthApiResponse } from '../lib/shared-types.ts';
+import appLogo from '../../assets/sgsis-logo.png';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Une erreur inattendue est survenue.';
@@ -369,7 +370,7 @@ export function Layout() {
       <>
         <div className="flex h-16 shrink-0 items-center px-6 border-b border-gray-100 justify-between">
           <div className="flex items-center">
-            <Building2 className="h-6 w-6 text-blue-600 mr-3" />
+            <img src={appLogo} alt="Logo SGSIS" className="mr-3 h-9 w-9 shrink-0 rounded-full object-contain" />
             <span className="text-sm font-bold text-gray-900 tracking-tight leading-tight">
               SGSIS de la Commune de Ouagadougou
             </span>
@@ -486,7 +487,7 @@ export function Layout() {
         {/* Mobile Header */}
         <div className="md:hidden flex items-center justify-between bg-white border-b border-gray-200 px-4 py-3 shrink-0">
           <div className="flex items-center">
-            <Building2 className="h-6 w-6 text-blue-600 mr-2" />
+            <img src={appLogo} alt="Logo SGSIS" className="mr-2 h-8 w-8 shrink-0 rounded-full object-contain" />
             <span className="text-sm font-bold text-gray-900 tracking-tight leading-tight">
               SGSIS de la Commune de Ouagadougou
             </span>

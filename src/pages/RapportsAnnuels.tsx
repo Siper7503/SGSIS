@@ -6,7 +6,7 @@ import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { Check, Download, Eye, FileSpreadsheet, FileText, Printer, Save, Send, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { DEFAULT_SCHOOL_YEAR, SCHOOL_YEARS } from '../lib/schoolYears.ts';
-import mairieLogo from '../../assets/mairie-ouagadougou-logo.jpg';
+import appLogo from '../../assets/sgsis-logo.png';
 
 const CLASS_LEVELS = ['6e', '5e', '4e', '3e', '2ndeA', '2ndeC', '1ereA', '1ereD', 'TleA', 'TleD'];
 const CYCLE_LEVELS = ['6e', '5e', '4e', '3e'];
@@ -209,7 +209,7 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
           <p>DIRECTION DES SERVICES DE L’ÉDUCATION</p>
         </div>
         <div className="annual-letterhead-cell annual-letterhead-center">
-          <img src={mairieLogo} alt="Blason de la Commune de Ouagadougou" />
+          <img src={appLogo} alt="Logo SGSIS" />
         </div>
         <div className="annual-letterhead-cell annual-letterhead-right">
           <p className="annual-letterhead-country">BURKINA FASO</p>

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Building2, 
   Mail, 
   Lock, 
   Shield, 
@@ -24,7 +23,8 @@ import {
 import { useAuth } from './AuthProvider.tsx';
 import { ROLES } from '../lib/roles.ts';
 import { isSessionUser, type AuthApiResponse, type SimulatedEmail } from '../lib/shared-types.ts';
-import mairieLogo from '../../assets/mairie-ouagadougou-logo.jpg';
+import appLogo from '../../assets/sgsis-logo.png';
+import mairieLogo from '../../assets/mairie-logo.jpeg';
 
 const DISPOSABLE_DOMAINS = [
   "yopmail.com", "tempmail.com", "mailinator.com", "10minutemail.com", 
@@ -306,29 +306,41 @@ export function Login() {
 
   return (
     <div className="min-h-screen bg-[#e8f7fb] flex flex-col">
-      <header className="shrink-0 border-b border-cyan-200/70 bg-white/85 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-sky-700 text-white shadow-md shadow-cyan-200">
-              <Building2 className="h-8 w-8" />
+      <header className="shrink-0 border-b border-cyan-200/70 bg-white/90 backdrop-blur">
+        <div className="mx-auto grid w-full max-w-screen-2xl grid-cols-2 items-center gap-4 px-4 py-5 sm:px-6 lg:grid-cols-[minmax(230px,340px)_1fr_minmax(230px,340px)] lg:px-10">
+          <figure className="order-1 flex min-w-0 flex-col items-center justify-center justify-self-start rounded-lg border border-cyan-100 bg-white p-2 shadow-sm shadow-cyan-900/5 sm:p-3">
+            <div className="flex h-32 w-full max-w-[320px] shrink-0 items-center justify-center bg-white sm:h-44 lg:h-52">
+              <img
+                src={appLogo}
+                alt="Logo SGSIS"
+                className="h-full w-full object-contain"
+              />
             </div>
-            <div className="min-w-0">
-              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">Commune de Ouagadougou</p>
-              <h1 className="text-base font-black leading-tight text-slate-950 sm:text-xl">
-                Système de Gestion des Infrastructures Scolaires SGSIS
-              </h1>
-            </div>
+          </figure>
+          <div className="order-3 col-span-2 min-w-0 overflow-visible text-center lg:order-2 lg:col-span-1">
+            <h2 className="login-title-sway mx-auto mt-2 max-w-none text-xl font-black leading-tight text-slate-950 sm:text-2xl xl:text-3xl">
+              <span className="block lg:whitespace-nowrap">Système de Gestion et de Suivi des Infrastructures</span>
+              <span className="block">Scolaires</span>
+            </h2>
+            <p className="mx-auto mt-3 max-w-xl text-xs font-semibold leading-relaxed text-slate-500 sm:text-sm">
+              Plateforme securisee de pilotage et de suivi des infrastructures scolaires.
+            </p>
           </div>
-          <img
-            src={mairieLogo}
-            alt="Logo de la Mairie de la Commune de Ouagadougou"
-            className="ml-4 h-16 w-16 shrink-0 rounded-full bg-white object-contain p-1.5 shadow-sm ring-1 ring-amber-200 sm:h-20 sm:w-20"
-          />
+          <figure className="order-2 flex min-w-0 flex-col items-center justify-center justify-self-end rounded-lg border border-amber-100 bg-white p-3 shadow-sm shadow-cyan-900/5 sm:p-4 lg:order-3">
+            <img
+              src={mairieLogo}
+              alt="Logo de la Mairie de la Commune de Ouagadougou"
+              className="h-28 w-full max-w-[260px] object-contain sm:h-36 lg:h-40"
+            />
+            <figcaption className="mt-2 text-center text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
+              COMMUNE DE OUAGADOUGOU
+            </figcaption>
+          </figure>
         </div>
       </header>
 
       <main className="flex flex-1 items-center justify-center px-4 py-8 lg:px-8">
-      <div className="w-full max-w-6xl overflow-hidden rounded-xl border border-cyan-100 bg-white shadow-2xl shadow-cyan-900/10 grid grid-cols-1 lg:grid-cols-12 min-h-[78vh]">
+      <div className="w-full max-w-6xl overflow-hidden rounded-lg border border-cyan-100 bg-white shadow-2xl shadow-cyan-900/10 grid grid-cols-1 lg:grid-cols-12 min-h-[68vh]">
         
         {/* LEFT COLUMN: AUTHENTICATION FORM WRAPPER (7 cols) */}
         <div className="lg:col-span-7 p-6 sm:p-10 flex flex-col justify-between bg-white relative">
@@ -339,8 +351,8 @@ export function Login() {
             <div className="flex items-center space-x-3">
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-amber-200">
                 <img
-                  src={mairieLogo}
-                  alt="Mairie de Ouagadougou"
+                  src={appLogo}
+                  alt="Logo SGSIS"
                   className="h-10 w-10 object-contain"
                 />
               </div>
@@ -807,7 +819,7 @@ export function Login() {
         {/* RIGHT COLUMN: SIMULATED INBOX DRAWER (5 cols) */}
         <div className="lg:col-span-5 bg-gradient-to-br from-cyan-950 via-sky-950 to-emerald-950 p-6 sm:p-8 flex flex-col justify-between text-slate-100 border-l border-cyan-900 relative">
           <div className="pointer-events-none absolute right-6 top-6 h-28 w-28 rounded-full bg-white/95 p-3 opacity-10">
-            <img src={mairieLogo} alt="" className="h-full w-full object-contain" />
+            <img src={appLogo} alt="" className="h-full w-full object-contain" />
           </div>
           
           <div className="space-y-4 flex-1 flex flex-col overflow-hidden">

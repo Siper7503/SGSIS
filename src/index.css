@@ -1,6 +1,22 @@
 @import "tailwindcss";
 
+@keyframes login-title-sway {
+  0%, 100% {
+    transform: translateX(calc(-1 * var(--login-title-sway-distance, 120px)));
+  }
+
+  50% {
+    transform: translateX(var(--login-title-sway-distance, 120px));
+  }
+}
+
 @layer components {
+  .login-title-sway {
+    --login-title-sway-distance: clamp(50px, 7vw, 110px);
+    animation: login-title-sway 5s ease-in-out infinite;
+    will-change: transform;
+  }
+
   .annual-letterhead {
     @apply grid min-h-36 grid-cols-[2fr_1fr_1.1fr] border border-slate-900 font-serif;
   }
