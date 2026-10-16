@@ -1181,6 +1181,17 @@ export default function Dashboard() {
     window.print();
   };
 
+  if (isTechnicalSuperAdmin || isBusinessAdmin) {
+    return (
+      <div className="space-y-5 pb-10">
+        <div className="rounded-xl bg-gradient-to-r from-blue-50 to-slate-50 px-5 py-4">
+          <h1 className="text-2xl font-black text-blue-950">Tableau de bord</h1>
+        </div>
+        <AdministratorModuleCards stats={stats} reportCount={annualReports.length} />
+      </div>
+    );
+  }
+
   // -------------------------------------------------------------
   // VIEW 0: INTERFACE ADMINISTRATEUR SYSTÈME DSE (Custom Security Dashboard)
   // -------------------------------------------------------------
