@@ -431,6 +431,30 @@ function AnnualReportsDashboard({
   );
 }
 
+function AdministratorModuleCards({ stats, reportCount }: { stats: DashboardStats | null; reportCount: number }) {
+  const cards = [
+    { title: 'Établissements', description: 'Répertoire et localisation des écoles', href: '/etablissements', value: stats?.totalEtablissements ?? '—', metric: 'établissements', Icon: Building2, color: 'from-orange-400 to-orange-500', surface: 'bg-orange-50' },
+    { title: 'Infrastructures', description: 'État des bâtiments et conformité', href: '/infrastructures', value: stats ? `${stats.conformiteCounts.conforme + stats.conformiteCounts.partiel + stats.conformiteCounts.nonConforme}` : '—', metric: 'sites renseignés', Icon: Hammer, color: 'from-emerald-500 to-green-600', surface: 'bg-emerald-50' },
+    { title: 'Effectifs', description: 'Élèves, enseignants et personnel', href: '/effectifs', value: stats ? stats.enrollmentStats.totalEleves.toLocaleString('fr-FR') : '—', metric: 'élèves enregistrés', Icon: Users, color: 'from-sky-500 to-blue-600', surface: 'bg-sky-50' },
+    { title: 'Rapports annuels', description: 'Suivi des rapports scolaires transmis', href: '/rapports-annuels', value: reportCount, metric: 'rapports reçus', Icon: FileText, color: 'from-violet-500 to-purple-600', surface: 'bg-violet-50' },
+  ];
+
+  return (
+    <section aria-label="Accès rapide aux modules SGSIS" className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+      {cards.map(({ title, description, href, value, metric, Icon, color, surface }) => (
+        <Link key={title} to={href} className="group overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+          <div className={`flex h-48 items-center justify-center ${surface}`}><Icon className="h-28 w-28 text-slate-800/80 transition duration-200 group-hover:scale-110" strokeWidth={1.25} /></div>
+          <div className={`min-h-36 bg-gradient-to-br ${color} px-5 py-4 text-white`}>
+            <h2 className="text-xl font-extrabold">{title}</h2>
+            <p className="mt-1 min-h-10 text-sm text-white/85">{description}</p>
+            <div className="mt-3 flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2 text-slate-800 shadow-sm"><Icon className="h-5 w-5" /><strong className="text-lg">{value}</strong><span className="text-xs text-slate-500">{metric}</span></div>
+          </div>
+        </Link>
+      ))}
+    </section>
+  );
+}
+
 export default function Dashboard() {
   const { token, user } = useAuth();
   const isTechnicalSuperAdmin = hasAnyRole(user?.role, SUPER_ADMIN_ROLES);
@@ -786,7 +810,15 @@ export default function Dashboard() {
 
       if (isTechnicalSuperAdmin) {
         setLoading(true);
-        await Promise.all([fetchAdminData(), fetchAnnualReports()]);
+        const [statsResponse] = await Promise.all([
+          apiFetch('/api/dashboard/stats', { headers: { Authorization: `Bearer ${token}` } }),
+          fetchAdminData(),
+          fetchAnnualReports(),
+        ]);
+        if (statsResponse.ok) {
+          const statsData: unknown = await statsResponse.json();
+          setStats(statsData as DashboardStats);
+        }
         setLoading(false);
         return;
       }
@@ -1160,6 +1192,8 @@ export default function Dashboard() {
           <h1 className="mt-2 text-3xl font-black">Centre de supervision</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-300">Contrôle global des comptes, des rôles, des blocages de sécurité et de la traçabilité du système.</p>
         </div>
+        <div className="rounded-xl bg-gradient-to-r from-blue-50 to-slate-50 px-5 py-4"><h1 className="text-2xl font-black text-blue-950">Tableau de bord</h1></div>
+        <AdministratorModuleCards stats={stats} reportCount={annualReports.length} />
         <AnnualReportsDashboard
           reports={annualReports}
           loading={annualReportsLoading}
@@ -2638,6 +2672,8 @@ export default function Dashboard() {
           </span>
         </div>
       </div>
+
+      <AdministratorModuleCards stats={stats} reportCount={annualReports.length} />
 
       {isBusinessAdmin && (
         <AnnualReportsDashboard

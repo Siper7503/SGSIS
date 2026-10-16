@@ -25,6 +25,7 @@ import Tice from './pages/Tice.tsx';
 import Audit from './pages/Audit.tsx';
 import RapportsAnnuels from './pages/RapportsAnnuels.tsx';
 import PublicAnnualReports from './pages/PublicAnnualReports.tsx';
+import Statistiques from './pages/Statistiques.tsx';
 import { ROLES, hasAnyRole } from './lib/roles.ts';
 
 function AnnualReportsRoute() {
@@ -48,6 +49,7 @@ export default function App() {
             <Route path="constructions" element={<Constructions />} />
             <Route path="communications" element={<Communications />} />
             <Route path="rapports" element={<Rapports />} />
+            <Route path="statistiques" element={<Statistiques />} />
             <Route path="rapports-annuels" element={<AnnualReportsRoute />} />
             <Route path="carte" element={<Carte />} />
             <Route path="predictions" element={<Predictions />} />
