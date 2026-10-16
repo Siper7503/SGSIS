@@ -307,7 +307,7 @@ export function Login() {
   return (
     <div className="min-h-screen bg-[#e8f7fb] flex flex-col">
       <header className="shrink-0 border-b border-cyan-200/70 bg-white/90 backdrop-blur">
-        <div className="mx-auto grid w-full max-w-screen-2xl grid-cols-2 items-center gap-4 px-4 py-5 sm:px-6 lg:grid-cols-[minmax(230px,340px)_1fr_minmax(230px,340px)] lg:px-10">
+        <div className="mx-auto grid w-full max-w-screen-2xl grid-cols-2 items-center gap-x-5 gap-y-4 px-4 py-5 sm:px-6 lg:grid-cols-[minmax(180px,280px)_minmax(0,1fr)_minmax(180px,280px)] lg:gap-x-8 lg:px-8">
           <figure className="order-1 flex min-w-0 flex-col items-center justify-center justify-self-start rounded-lg border border-cyan-100 bg-white p-2 shadow-sm shadow-cyan-900/5 sm:p-3">
             <div className="flex h-32 w-full max-w-[320px] shrink-0 items-center justify-center bg-white sm:h-44 lg:h-52">
               <img
@@ -317,9 +317,9 @@ export function Login() {
               />
             </div>
           </figure>
-          <div className="order-3 col-span-2 min-w-0 overflow-visible text-center lg:order-2 lg:col-span-1">
-            <h2 className="login-title-sway mx-auto mt-2 max-w-none text-xl font-black leading-tight text-slate-950 sm:text-2xl xl:text-3xl">
-              <span className="block lg:whitespace-nowrap">Système de Gestion et de Suivi des Infrastructures</span>
+          <div className="order-3 col-span-2 min-w-0 px-2 text-center lg:order-2 lg:col-span-1 lg:px-1">
+            <h2 className="login-title-sway mx-auto mt-2 max-w-full whitespace-nowrap text-[clamp(1rem,2vw,2.25rem)] font-black leading-tight text-slate-950">
+              <span className="block">Système de Gestion et de Suivi des Infrastructures</span>
               <span className="block">Scolaires</span>
             </h2>
             <p className="mx-auto mt-3 max-w-xl text-xs font-semibold leading-relaxed text-slate-500 sm:text-sm">
