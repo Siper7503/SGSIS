@@ -36,7 +36,7 @@ export default function Infrastructures() {
   }, [token]);
 
   const isLocalActor = hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
-  const canWrite = hasAnyRole(user?.role, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES]);
+  const canWrite = hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
 
   const enrichedData = infrastructures.map((item) => {
     const userFullName = `${user?.prenom || ''} ${user?.nom || ''}`.trim().toLowerCase();

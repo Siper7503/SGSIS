@@ -4,7 +4,7 @@ import { useAuth } from '../components/AuthProvider.tsx';
 import { Building2, Plus, Search, Upload } from 'lucide-react';
 import { EtablissementForm } from '../components/EtablissementForm.tsx';
 import { ImportCsvModal } from '../components/ImportCsvModal.tsx';
-import { DSE_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Etablissements() {
   const [etablissements, setEtablissements] = useState<any[]>([]);
@@ -20,7 +20,8 @@ export default function Etablissements() {
 
   const { token, user } = useAuth();
   const userRole = user?.role;
-  const canWrite = hasAnyRole(userRole, DSE_ROLES);
+  const canManageDirectory = hasAnyRole(userRole, DSE_ROLES);
+  const canEditOwnEstablishment = hasAnyRole(userRole, LOCAL_SCHOOL_ROLES);
 
   const fetchEtablissements = async () => {
     if (!token) return;
@@ -96,6 +97,7 @@ export default function Etablissements() {
         </div>
         <EtablissementForm 
           etablissement={editingEtablissement}
+          agentLimited={canEditOwnEstablishment && !canManageDirectory}
           onSuccess={() => {
             setIsCreating(false);
             setEditingEtablissement(null);
@@ -119,7 +121,7 @@ export default function Etablissements() {
             Gestion des fiches établissements Publics (Primaires et Sécondaires).
           </p>
         </div>
-        {canWrite && (
+        {canManageDirectory && (
           <div className="mt-4 flex sm:mt-0 space-x-3">
             <button
               type="button"
@@ -300,7 +302,7 @@ export default function Etablissements() {
                     <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
                       Directeur/Proviseur
                     </th>
-                    {canWrite && (
+                    {(canManageDirectory || canEditOwnEstablishment) && (
                       <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6 text-right text-sm font-semibold text-gray-900">
                         Actions
                       </th>
@@ -340,7 +342,7 @@ export default function Etablissements() {
                           )}
                         </td>
                         <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{etab.nomDirecteur || '-'}</td>
-                        {canWrite && (
+                        {(canManageDirectory || canEditOwnEstablishment) && (
                           <td className="whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6 space-x-3">
                             <button
                               onClick={() => setEditingEtablissement(etab)}
@@ -348,7 +350,7 @@ export default function Etablissements() {
                             >
                               Éditer
                             </button>
-                            {!etab.archived && (
+                            {canManageDirectory && !etab.archived && (
                               <button
                                 onClick={() => handleArchive(etab.id)}
                                 className="text-red-600 hover:text-red-900"

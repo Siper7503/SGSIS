@@ -13,7 +13,7 @@ import {
 
 const REPORT_TYPE_LABELS: Record<string, string> = {
   entree: "Rapport d'entree",
-  fin_cycle: 'Rapport de fin de cycle',
+  fin_cycle: 'Rapport de sortie',
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -36,6 +36,14 @@ function sumCycle(cycle: unknown): number {
 
 function reportSummary(report: AnnualReportListItem['report'], type: string | undefined) {
   const data = asRecord(report.donnees);
+  if (data.modele === 'rapport-sortie-v1') {
+    const exitData = asRecord(data.rapportSortie);
+    const levels = Array.isArray(asRecord(exitData.effectifsFinaux).parNiveau) ? asRecord(exitData.effectifsFinaux).parNiveau as unknown[] : [];
+    const students = levels.reduce<number>((sum, item) => sum + numericValue(asRecord(item).totalInscrits), 0);
+    const results = Array.isArray(exitData.resultatsScolaires) ? exitData.resultatsScolaires : [];
+    const admitted = results.reduce<number>((sum, item) => sum + numericValue(asRecord(item).totalAdmis), 0);
+    return `Effectifs finaux : ${students} | Admis : ${admitted}`;
+  }
   if (type === 'Primaire') {
     return `Classes : ${numericValue(data.classes)} | Eleves : ${numericValue(data.filles) + numericValue(data.garcons)} | Enseignants : ${numericValue(data.enseignantsEnClasse)}`;
   }

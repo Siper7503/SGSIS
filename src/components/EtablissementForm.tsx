@@ -5,11 +5,12 @@ import { AlertTriangle, CheckCircle, HelpCircle } from 'lucide-react';
 
 interface EtablissementFormProps {
   etablissement?: any;
+  agentLimited?: boolean;
   onSuccess: () => void;
   onCancel: () => void;
 }
 
-export function EtablissementForm({ etablissement, onSuccess, onCancel }: EtablissementFormProps) {
+export function EtablissementForm({ etablissement, agentLimited = false, onSuccess, onCancel }: EtablissementFormProps) {
   const { token } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +66,9 @@ export function EtablissementForm({ etablissement, onSuccess, onCancel }: Etabli
     try {
       const url = isEditing ? `/api/etablissements/${etablissement.id}` : '/api/etablissements';
       const method = isEditing ? 'PUT' : 'POST';
+      const submittedData = agentLimited
+        ? { nomDirecteur: formData.nomDirecteur, coordonnees: formData.coordonnees }
+        : { ...formData, force: forceSubmit };
 
       const res = await apiFetch(url, {
         method,
@@ -72,10 +76,7 @@ export function EtablissementForm({ etablissement, onSuccess, onCancel }: Etabli
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({
-          ...formData,
-          force: forceSubmit
-        })
+        body: JSON.stringify(submittedData)
       });
 
       if (res.status === 409) {
@@ -161,6 +162,7 @@ export function EtablissementForm({ etablissement, onSuccess, onCancel }: Etabli
                 required
                 value={formData.nom}
                 onChange={handleChange}
+                disabled={agentLimited}
                 className="block w-full rounded-md border-gray-300 border p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
               />
             </div>
@@ -176,6 +178,7 @@ export function EtablissementForm({ etablissement, onSuccess, onCancel }: Etabli
                 name="type"
                 value={formData.type}
                 onChange={handleChange}
+                disabled={agentLimited}
                 className="block w-full rounded-md border-gray-300 border p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
               >
                 <option value="Primaire">Primaire</option>
@@ -194,6 +197,7 @@ export function EtablissementForm({ etablissement, onSuccess, onCancel }: Etabli
                 name="statut"
                 value={formData.statut}
                 onChange={handleChange}
+                disabled={agentLimited}
                 className="block w-full rounded-md border-gray-300 border p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
               >
                 <option value="public">Public</option>
@@ -213,6 +217,7 @@ export function EtablissementForm({ etablissement, onSuccess, onCancel }: Etabli
                 name="arrondissement"
                 value={formData.arrondissement}
                 onChange={handleChange}
+                disabled={agentLimited}
                 className="block w-full rounded-md border-gray-300 border p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
               >
                 {Array.from({ length: 12 }, (_, i) => (
@@ -257,7 +262,7 @@ export function EtablissementForm({ etablissement, onSuccess, onCancel }: Etabli
             </div>
           </div>
 
-          {isEditing && (
+          {isEditing && !agentLimited && (
             <div>
               <label htmlFor="archived" className="block text-sm font-medium text-gray-700">
                 Statut de la fiche (Archivage logique)

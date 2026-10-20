@@ -2,17 +2,16 @@ import { and, eq } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { moduleSubmissions } from '../db/schema.ts';
 import { AuthRequest } from '../middleware/auth.ts';
-import { DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export type ModuleWorkflowAction = 'save' | 'submit';
 export type ModuleDecision = 'approuver' | 'rejeter';
 
 export function isSchoolDataWriter(role?: string | null): boolean {
-  return hasAnyRole(role, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES]);
+  return hasAnyRole(role, LOCAL_SCHOOL_ROLES);
 }
 
 export function workflowStatusForSave(requester: Pick<NonNullable<AuthRequest['user']>, 'role'> | null | undefined, action: ModuleWorkflowAction): string {
-  if (hasAnyRole(requester?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES])) return 'Valide';
   if (action === 'submit') return 'Soumis au DSE';
   return 'Brouillon';
 }

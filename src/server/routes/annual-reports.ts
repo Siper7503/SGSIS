@@ -68,9 +68,13 @@ export function createAnnualReportsRouter(logAudit: AuditLogger): Router {
   });
 
   router.post("/api/annual-reports", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ...LOCAL_SCHOOL_ROLES], "Acces refuse : vous n'avez pas acces aux rapports annuels.")) return;
+    if (!requireAnyRole(req, res, LOCAL_SCHOOL_ROLES, "Acces refuse : la saisie des rapports annuels est reservee aux agents d'etablissement.")) return;
     try {
       const { etablissementId, anneeScolaire, typeRapport = "entree", donnees, action = "save" } = req.body;
+      if (action === "submit" && req.body.validated !== true) {
+        res.status(400).json({ error: "Le rapport doit être examiné et validé par l'agent avant sa transmission." });
+        return;
+      }
       const targetId = Number(etablissementId);
       const reportType = String(typeRapport);
       if (!["entree", "fin_cycle"].includes(reportType)) {
@@ -85,6 +89,11 @@ export function createAnnualReportsRouter(logAudit: AuditLogger): Router {
         res.status(400).json({ error: "L'etablissement, l'annee scolaire et les donnees sont obligatoires." });
         return;
       }
+      const expectedModel = reportType === "entree" ? "rapport-rentree-complet-v1" : "rapport-sortie-v1";
+      if (donnees.modele !== expectedModel) {
+        res.status(400).json({ error: "Les donnees ne correspondent pas au modele du rapport selectionne." });
+        return;
+      }
 
       const targetRows = await db.select().from(etablissements).where(eq(etablissements.id, targetId));
       if (targetRows.length === 0) {
@@ -92,14 +101,16 @@ export function createAnnualReportsRouter(logAudit: AuditLogger): Router {
         return;
       }
       const target = targetRows[0];
-      const isDse = hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES]);
-      const isLocal = hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES);
+      if (reportType === "entree" && target.type !== "Secondaire") {
+        res.status(403).json({ error: "Le formulaire officiel transmis est reserve aux etablissements secondaires." });
+        return;
+      }
       const isProviseur = hasAnyRole(req.user?.role, [ROLES.PROVISEUR]);
-      if (isLocal && req.user?.etablissementId !== targetId) {
+      if (req.user?.etablissementId !== targetId) {
         res.status(403).json({ error: "Vous ne pouvez renseigner que votre propre etablissement." });
         return;
       }
-      if (isLocal && !isDse && target.type === "Primaire" && !hasAnyRole(req.user?.role, [ROLES.DIRECTEUR_ECOLE])) {
+      if (target.type === "Primaire" && !hasAnyRole(req.user?.role, [ROLES.DIRECTEUR_ECOLE])) {
         res.status(403).json({ error: "Pour une ecole primaire, seul le Directeur d'ecole renseigne le rapport." });
         return;
       }
@@ -114,11 +125,11 @@ export function createAnnualReportsRouter(logAudit: AuditLogger): Router {
         eq(annualReports.typeRapport, reportType)
       )).limit(1);
       let statut = existing[0]?.statut || "Brouillon";
-      if (isLocal && existing[0] && !["Brouillon", "Rejete"].includes(existing[0].statut) && !(isProviseur && existing[0].statut === "Soumis au proviseur")) {
+      if (existing[0] && !["Brouillon", "Rejete"].includes(existing[0].statut) && !(isProviseur && existing[0].statut === "Soumis au proviseur")) {
         res.status(409).json({ error: "Ce rapport est deja transmis et ne peut plus etre modifie a ce stade du circuit." });
         return;
       }
-      if (action === "save" && isLocal && statut === "Rejete") {
+      if (action === "save" && statut === "Rejete") {
         statut = "Brouillon";
       }
       if (action === "submit") {
@@ -152,17 +163,17 @@ export function createAnnualReportsRouter(logAudit: AuditLogger): Router {
   });
 
   router.post("/api/annual-reports/:id/decision", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, [...SUPER_ADMIN_ROLES, ...DSE_ROLES, ROLES.PROVISEUR], "Acces refuse : profil non habilite.")) return;
+    if (!requireAnyRole(req, res, [...DSE_ROLES, ROLES.PROVISEUR], "Acces refuse : profil non habilite.")) return;
     try {
       const reportId = Number(req.params.id);
-      const { decision } = req.body;
+      const { decision, commentaire } = req.body;
       const rows = await db.select().from(annualReports).where(eq(annualReports.id, reportId));
       if (rows.length === 0) {
         res.status(404).json({ error: "Rapport annuel introuvable." });
         return;
       }
       const report = rows[0];
-      const isDse = hasAnyRole(req.user?.role, [...SUPER_ADMIN_ROLES, ...DSE_ROLES]);
+      const isDse = hasAnyRole(req.user?.role, DSE_ROLES);
       const isProviseur = hasAnyRole(req.user?.role, [ROLES.PROVISEUR]);
       if (isProviseur && req.user?.etablissementId !== report.etablissementId) {
         res.status(403).json({ error: "Vous ne pouvez valider que le rapport de votre etablissement." });
@@ -191,12 +202,16 @@ export function createAnnualReportsRouter(logAudit: AuditLogger): Router {
         res.status(400).json({ error: "Decision invalide." });
         return;
       }
+      if (decision === "rejeter" && (typeof commentaire !== 'string' || !commentaire.trim())) {
+        res.status(400).json({ error: "Le motif du rejet est obligatoire." });
+        return;
+      }
       if (report.statut !== "Soumis au DSE") {
         res.status(409).json({ error: "La decision finale ne peut porter que sur un rapport soumis a la DSE." });
         return;
       }
-      const updated = await db.update(annualReports).set({ statut: nextStatus, updatedAt: new Date(), validatedById: req.user?.id || null, validatedAt: decision === "valider" ? new Date() : null }).where(eq(annualReports.id, reportId)).returning();
-      await logAudit(req.user?.id, decision === "valider" ? "VALIDATION_RAPPORT_ANNUEL" : "REJET_RAPPORT_ANNUEL", "annual_reports", reportId, { statut: nextStatus });
+      const updated = await db.update(annualReports).set({ statut: nextStatus, updatedAt: new Date(), validatedById: req.user?.id || null, validatedAt: decision === "valider" ? new Date() : null, commentaireRejet: decision === "rejeter" ? commentaire.trim() : null }).where(eq(annualReports.id, reportId)).returning();
+      await logAudit(req.user?.id, decision === "valider" ? "VALIDATION_RAPPORT_ANNUEL" : "REJET_RAPPORT_ANNUEL", "annual_reports", reportId, { statut: nextStatus, commentaireRejet: decision === "rejeter" ? commentaire.trim() : null });
       res.json({ success: true, report: updated[0] });
     } catch (error: unknown) {
       res.status(500).json({ error: errorMessage(error) });
@@ -217,6 +232,10 @@ export function createAnnualReportsRouter(logAudit: AuditLogger): Router {
       const { decision, commentaire } = req.body;
       if (decision !== 'approuver' && decision !== 'rejeter') {
         res.status(400).json({ error: "Decision invalide." });
+        return;
+      }
+      if (decision === 'rejeter' && (typeof commentaire !== 'string' || !commentaire.trim())) {
+        res.status(400).json({ error: "Le motif du rejet est obligatoire." });
         return;
       }
       const recordId = Number(req.params.recordId);
@@ -253,7 +272,7 @@ export function createAnnualReportsRouter(logAudit: AuditLogger): Router {
         statut: nextStatus,
         reviewedById: req.user.id || null,
         reviewedAt: new Date(),
-        commentaire: commentaire || null,
+        commentaire: decision === 'rejeter' ? commentaire.trim() : null,
         updatedAt: new Date()
       }).where(eq(moduleSubmissions.id, submission.id)).returning();
       await logAudit(req.user.id, decision === 'approuver' ? 'VALIDATION_DONNEE_ETABLISSEMENT' : 'RETOUR_DONNEE_ETABLISSEMENT', req.params.module, recordId, { statut: nextStatus, commentaire });

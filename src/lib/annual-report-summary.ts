@@ -196,7 +196,13 @@ export function summarizeAnnualReports(
     }
 
     if (!isFinalReport || !isValidated(row)) return;
-    if (type === 'Primaire') {
+    if (data.modele === 'rapport-sortie-v1') {
+      const exitData = asRecord(data.rapportSortie);
+      const results = Array.isArray(exitData.resultatsScolaires) ? exitData.resultatsScolaires.map(asRecord) : [];
+      const candidates = results.reduce((sum, result) => sum + numberValue(result.effectifExamine), 0);
+      const admitted = results.reduce((sum, result) => sum + numberValue(result.fillesAdmis) + numberValue(result.garconsAdmis), 0);
+      if (candidates || admitted) exams.set('Bilan scolaire', { candidates, admitted });
+    } else if (type === 'Primaire') {
       const cep = asRecord(data.cep);
       const cepCandidates = numberValue(cep.candidatsFilles ?? cep.presentsFilles)
         + numberValue(cep.candidatsGarcons ?? cep.presentsGarcons);

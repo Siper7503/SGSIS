@@ -4,14 +4,14 @@ import { apiFetch } from '../lib/api.ts';
 import { Plus, Droplets, Utensils } from 'lucide-react';
 import { WashForm } from '../components/WashForm.tsx';
 import { ModuleWorkflowActions } from '../components/ModuleWorkflowActions.tsx';
-import { DSE_ROLES, LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
+import { LOCAL_SCHOOL_ROLES, hasAnyRole } from '../lib/roles.ts';
 
 export default function Wash() {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const { token, user } = useAuth();
-  const canWrite = hasAnyRole(user?.role, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES]);
+  const canWrite = hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
 
   const fetchData = async () => {
     if (!token) return;

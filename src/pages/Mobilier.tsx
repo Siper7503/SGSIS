@@ -126,7 +126,7 @@ export default function Mobilier() {
   });
 
   const isDse = hasAnyRole(user?.role, DSE_ROLES);
-  const canWrite = isDse || hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
+  const canWrite = hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
 
   // Filter enriched data
   const filteredData = enrichedData.filter((item) => {

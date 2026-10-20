@@ -23,6 +23,8 @@ export function ModuleWorkflowActions({ module, recordId, workflowStatus, onUpda
 
   const decide = async (decision: 'approuver' | 'rejeter') => {
     if (!token || !recordId || loading) return;
+    const commentaire = decision === 'rejeter' ? window.prompt('Indiquez le motif du rejet et les corrections attendues :') : null;
+    if (decision === 'rejeter' && !commentaire?.trim()) return;
     setLoading(true);
     try {
       const response = await apiFetch(`/api/module-submissions/${module}/${recordId}/decision`, {
@@ -31,7 +33,7 @@ export function ModuleWorkflowActions({ module, recordId, workflowStatus, onUpda
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ decision })
+        body: JSON.stringify({ decision, commentaire: commentaire?.trim() })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Impossible de traiter la transmission.');

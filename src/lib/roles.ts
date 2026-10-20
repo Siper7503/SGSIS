@@ -75,7 +75,6 @@ export const MANAGEMENT_ROLES = [
 ] as const;
 
 export const SCHOOL_WRITE_ROLES = [
-  ...DSE_ROLES,
   ...LOCAL_SCHOOL_ROLES,
 ] as const;
 

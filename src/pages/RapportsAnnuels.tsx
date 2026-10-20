@@ -3,10 +3,12 @@ import { apiFetch } from '../lib/api.ts';
 import { useAuth } from '../components/AuthProvider.tsx';
 import { DGSS_ROLES, DSE_ROLES, LOCAL_SCHOOL_ROLES, ROLES, SUPER_ADMIN_ROLES, hasAnyRole } from '../lib/roles.ts';
 import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Check, Download, Eye, FileSpreadsheet, FileText, Printer, Save, Send, X } from 'lucide-react';
+import { Check, Download, Eye, FileSpreadsheet, FileText, Pencil, Printer, Save, Send, X, Plus, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { DEFAULT_SCHOOL_YEAR, SCHOOL_YEARS } from '../lib/schoolYears.ts';
 import appLogo from '../../assets/sgsis-logo.png';
+import { emptyAnnualReportComplement, mergeAnnualReportComplement } from '../lib/annual-report-template.ts';
+import { emptyAnnualExitReport, mergeAnnualExitReport } from '../lib/annual-exit-report-template.ts';
 
 const CLASS_LEVELS = ['6e', '5e', '4e', '3e', '2ndeA', '2ndeC', '1ereA', '1ereD', 'TleA', 'TleD'];
 const CYCLE_LEVELS = ['6e', '5e', '4e', '3e'];
@@ -15,7 +17,7 @@ const REPORT_TYPES = ['entree', 'fin_cycle'] as const;
 type ReportType = typeof REPORT_TYPES[number];
 const REPORT_TYPE_LABELS: Record<ReportType, string> = {
   entree: 'Rapport de rentrée',
-  fin_cycle: 'Rapport de fin de cycle / sortie',
+  fin_cycle: 'Rapport de sortie',
 };
 const SECONDARY_EXAMS = ['bepc', 'bep', 'cqp', 'bac'] as const;
 const SECONDARY_EXAM_LABELS: Record<typeof SECONDARY_EXAMS[number], string> = {
@@ -32,7 +34,8 @@ const emptyReport = (type: string) => type === 'Primaire' ? {
   garcons: 0,
   cep: { candidatsFilles: 0, candidatsGarcons: 0, admisFilles: 0, admisGarcons: 0 },
   cepAvecLibres: { presentsFilles: 0, presentsGarcons: 0, admisFilles: 0, admisGarcons: 0 },
-  cepSansLibres: { presentsFilles: 0, presentsGarcons: 0, admisFilles: 0, admisGarcons: 0 }
+  cepSansLibres: { presentsFilles: 0, presentsGarcons: 0, admisFilles: 0, admisGarcons: 0 },
+  rapportSortie: emptyAnnualExitReport(),
 } : {
   classes: Object.fromEntries(CLASS_LEVELS.map((level) => [level, 0])),
   premierCycle: Object.fromEntries(CYCLE_LEVELS.map((level) => [level, { filles: 0, garcons: 0 }])),
@@ -41,7 +44,9 @@ const emptyReport = (type: string) => type === 'Primaire' ? {
   bepc: { candidatsFilles: 0, candidatsGarcons: 0, admisFilles: 0, admisGarcons: 0 },
   bep: { candidatsFilles: 0, candidatsGarcons: 0, admisFilles: 0, admisGarcons: 0 },
   cqp: { candidatsFilles: 0, candidatsGarcons: 0, admisFilles: 0, admisGarcons: 0 },
-  bac: { candidatsFilles: 0, candidatsGarcons: 0, admisFilles: 0, admisGarcons: 0 }
+  bac: { candidatsFilles: 0, candidatsGarcons: 0, admisFilles: 0, admisGarcons: 0 },
+  rapportComplet: emptyAnnualReportComplement(),
+  rapportSortie: emptyAnnualExitReport(),
 };
 
 function normalizeReportData(type: string, source: any) {
@@ -55,6 +60,7 @@ function normalizeReportData(type: string, source: any) {
       cep: { ...base.cep, ...(source.cep || {}) },
       cepAvecLibres: { ...base.cepAvecLibres, ...(source.cepAvecLibres || {}) },
       cepSansLibres: { ...base.cepSansLibres, ...(source.cepSansLibres || {}) },
+      rapportSortie: mergeAnnualExitReport(source.rapportSortie),
     };
   }
 
@@ -76,6 +82,8 @@ function normalizeReportData(type: string, source: any) {
     bep: { ...base.bep, ...(source.bep || {}) },
     cqp: { ...base.cqp, ...(source.cqp || {}) },
     bac: { ...base.bac, ...(source.bac || {}) },
+    rapportComplet: mergeAnnualReportComplement(source.rapportComplet),
+    rapportSortie: mergeAnnualExitReport(source.rapportSortie),
   };
 }
 
@@ -103,35 +111,37 @@ function safeFileName(value: string) {
     .replace(/^-+|-+$/g, '') || 'etablissement';
 }
 
-function sanitizeReportData(type: string, reportType: ReportType, source: any) {
-  const normalized = normalizeReportData(type, source);
-  if (type === 'Primaire') {
-    const base: any = {
-      classes: normalized.classes,
-      enseignantsEnClasse: normalized.enseignantsEnClasse,
-      filles: normalized.filles,
-      garcons: normalized.garcons,
-    };
-    if (reportType === 'fin_cycle') {
-      base.cep = normalized.cep;
-      base.cepAvecLibres = normalized.cepAvecLibres;
-      base.cepSansLibres = normalized.cepSansLibres;
-    }
-    return base;
-  }
-
-  const base: any = {
-    classes: normalized.classes,
-    premierCycle: normalized.premierCycle,
-    secondCycle: normalized.secondCycle,
-    enseignants: normalized.enseignants,
+function escapeHtml(value: string) {
+  const entities: Record<string, string> = {
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   };
+  return value.replace(/[&<>"']/g, (character) => entities[character] || character);
+}
+
+function sanitizeReportData(source: any, reportType: ReportType) {
+  const normalized = normalizeReportData('Secondaire', source);
   if (reportType === 'fin_cycle') {
-    SECONDARY_EXAMS.forEach((key) => {
-      base[key] = normalized[key];
-    });
+    return { modele: 'rapport-sortie-v1', rapportSortie: mergeAnnualExitReport(normalized.rapportSortie) };
   }
-  return base;
+  const full = normalized.rapportComplet;
+  const general = full.III_informationsGenerales;
+  const classes = Object.fromEntries([
+    ...general.postPrimaire.map((row: any) => [row.niveau, numberValue(row.nombreClasses)]),
+    ...general.secondaire.map((row: any) => [row.niveau, numberValue(row.nombreClasses)]),
+  ]);
+  const cycleSummary = (rows: any[]) => Object.fromEntries(rows.map((row: any) => [row.niveau, {
+    filles: numberValue(row.filles), garcons: numberValue(row.garcons),
+  }]));
+  const teachingTotal = [...full.IV_personnelEnseignant.public, ...full.IV_personnelEnseignant.prive]
+    .reduce((sum: number, row: any) => sum + numberValue(row.totalPourvu), 0);
+  return {
+    modele: 'rapport-rentree-complet-v1',
+    rapportComplet: full,
+    classes,
+    premierCycle: cycleSummary(general.postPrimaire),
+    secondCycle: cycleSummary(general.secondaire),
+    enseignants: { hommes: teachingTotal, femmes: 0 },
+  };
 }
 
 function numberValue(value: unknown) {
@@ -140,7 +150,9 @@ function numberValue(value: unknown) {
 }
 
 function flatten(value: any, prefix = '', output: Record<string, unknown> = {}) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
+  if (Array.isArray(value)) {
+    value.forEach((nested, index) => flatten(nested, prefix ? `${prefix}.${index + 1}` : String(index + 1), output));
+  } else if (value && typeof value === 'object') {
     Object.entries(value).forEach(([key, nested]) => flatten(nested, prefix ? `${prefix}.${key}` : key, output));
   } else {
     output[prefix] = value ?? 0;
@@ -148,7 +160,7 @@ function flatten(value: any, prefix = '', output: Record<string, unknown> = {}) 
   return output;
 }
 
-function setPath(source: any, path: string[], value: number) {
+function setPath(source: any, path: string[], value: unknown) {
   const next = structuredClone(source);
   let cursor = next;
   path.slice(0, -1).forEach((part) => {
@@ -159,14 +171,146 @@ function setPath(source: any, path: string[], value: number) {
   return next;
 }
 
-function NumericField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
-  return (
-    <label className="block text-xs font-semibold text-slate-600">
-      {label}
-      <input type="number" min="0" value={value || 0} onChange={(event) => onChange(numberValue(event.target.value))} className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
-    </label>
-  );
+const REPORT_FIELD_LABELS: Record<string, string> = {
+  F: 'Femmes', H: 'Hommes', T: 'Total', boitPostale: 'Boîte postale',
+  public: 'Établissement public', prive: 'Établissement privé',
+  exerciceAnterieur: 'Exercice antérieur', exerciceEnCours: 'Exercice en cours',
+  DPESFPT: 'DPESFPT', CESFPT: 'CESFPT',
+};
+
+function reportFieldLabel(value: string) {
+  return REPORT_FIELD_LABELS[value] || value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ').replace(/^./, (letter) => letter.toUpperCase());
 }
+
+function blankLike(value: any): any {
+  if (Array.isArray(value)) return [];
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, blankLike(nested)]));
+  if (typeof value === 'number') return 0;
+  if (typeof value === 'boolean') return false;
+  return '';
+}
+
+function setNestedValue(source: any, path: string[], value: unknown): any {
+  const next = structuredClone(source);
+  let cursor = next;
+  path.slice(0, -1).forEach((part) => { cursor = cursor[part]; });
+  cursor[path[path.length - 1]] = value;
+  return next;
+}
+
+function DynamicReportFields({ value, path, onChange }: { value: any; path: string[]; onChange: (path: string[], value: unknown) => void }) {
+  if (Array.isArray(value)) {
+    const isObjectList = value.some((item) => item && typeof item === 'object' && !Array.isArray(item));
+    const tableRows = isObjectList && value.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.values(item).every((cell) => cell === null || ['string', 'number', 'boolean'].includes(typeof cell)));
+    if (tableRows) {
+      const columns = Object.keys(value[0] || {});
+      return (
+        <div className="space-y-3">
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="min-w-full border-collapse text-xs">
+              <thead><tr className="bg-slate-100">{columns.map((key) => <th key={key} className="border-b border-r border-slate-200 px-3 py-2 text-left font-bold text-slate-700">{reportFieldLabel(key)}</th>)}<th className="border-b border-slate-200 px-3 py-2" /></tr></thead>
+              <tbody>{value.map((item, rowIndex) => <tr key={`${path.join('.')}-${rowIndex}`} className="align-top odd:bg-white even:bg-slate-50">{columns.map((key) => {
+                const cell = item[key];
+                const multiline = /observation|commentaire|precisions|difficultes|solutions|besoins|mouvements/i.test(key);
+                const calculated = /^total|^tauxReussite$/i.test(key);
+                return <td key={key} className="min-w-32 border-r border-slate-100 p-1.5">{typeof cell === 'boolean'
+                  ? <input type="checkbox" checked={cell} onChange={(event) => onChange([...path, String(rowIndex), key], event.target.checked)} aria-label={reportFieldLabel(key)} />
+                  : typeof cell === 'number'
+                    ? <input type="number" min="0" value={cell} readOnly={calculated} onChange={(event) => onChange([...path, String(rowIndex), key], numberValue(event.target.value))} className="w-24 rounded border border-slate-200 px-2 py-1.5 read-only:bg-slate-100 read-only:text-slate-500" aria-label={reportFieldLabel(key)} />
+                    : multiline
+                      ? <textarea value={String(cell ?? '')} onChange={(event) => onChange([...path, String(rowIndex), key], event.target.value)} rows={2} className="min-w-40 rounded border border-slate-200 px-2 py-1.5" aria-label={reportFieldLabel(key)} />
+                      : <input value={String(cell ?? '')} onChange={(event) => onChange([...path, String(rowIndex), key], event.target.value)} className="min-w-28 rounded border border-slate-200 px-2 py-1.5" aria-label={reportFieldLabel(key)} />}</td>;
+              })}<td className="px-2 py-1.5"><button type="button" disabled={value.length <= 1} onClick={() => onChange(path, value.filter((_: unknown, index: number) => index !== rowIndex))} className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30" aria-label="Supprimer cette ligne"><Trash2 className="h-4 w-4" /></button></td></tr>)}</tbody>
+            </table>
+          </div>
+          <button type="button" onClick={() => onChange(path, [...value, blankLike(value[0])])} className="inline-flex items-center gap-1 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 hover:border-blue-300 hover:text-blue-700"><Plus className="h-3.5 w-3.5" /> Ajouter une ligne</button>
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-3">
+        {value.map((item, index) => (
+          isObjectList ? (
+            <fieldset key={`${path.join('.')}-${index}`} className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <div className="mb-3 flex items-center justify-between gap-3"><legend className="text-xs font-bold text-slate-700">Ligne {index + 1}{typeof item?.niveau === 'string' ? ` — ${item.niveau}` : ''}{typeof item?.discipline === 'string' ? ` — ${item.discipline}` : ''}{typeof item?.fonction === 'string' ? ` — ${item.fonction}` : ''}{typeof item?.emploi === 'string' ? ` — ${item.emploi}` : ''}{typeof item?.activite === 'string' ? ` — ${item.activite}` : ''}{typeof item?.concours === 'string' ? ` — ${item.concours}` : ''}</legend><button type="button" onClick={() => onChange(path, value.filter((_: unknown, rowIndex: number) => rowIndex !== index))} className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Supprimer cette ligne"><Trash2 className="h-4 w-4" /></button></div>
+              <DynamicReportFields value={item} path={[...path, String(index)]} onChange={(nestedPath, next) => { const rows = [...value]; rows[index] = setNestedValue(rows[index], nestedPath.slice(path.length + 1), next); onChange(path, rows); }} />
+            </fieldset>
+          ) : (
+            <div key={`${path.join('.')}-${index}`} className="flex items-center gap-2"><input value={String(item ?? '')} onChange={(event) => { const rows = [...value]; rows[index] = event.target.value; onChange(path, rows); }} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /><button type="button" onClick={() => onChange(path, value.filter((_: unknown, rowIndex: number) => rowIndex !== index))} className="rounded p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Supprimer cette ligne"><Trash2 className="h-4 w-4" /></button></div>
+          )
+        ))}
+        <button type="button" onClick={() => onChange(path, [...value, value.length ? blankLike(value[0]) : ''])} className="inline-flex items-center gap-1 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 hover:border-blue-300 hover:text-blue-700"><Plus className="h-3.5 w-3.5" /> Ajouter une ligne</button>
+      </div>
+    );
+  }
+
+  if (value && typeof value === 'object') {
+    return (
+      <div className="grid gap-3 md:grid-cols-2">
+        {Object.entries(value).map(([key, nested]) => {
+          const label = reportFieldLabel(key);
+          if (Array.isArray(nested)) return <div key={key} className="md:col-span-2"><p className="mb-2 text-xs font-bold text-slate-700">{label}</p><DynamicReportFields value={nested} path={[...path, key]} onChange={onChange} /></div>;
+          if (nested && typeof nested === 'object') return <fieldset key={key} className="rounded-lg border border-slate-200 p-3 md:col-span-2"><legend className="px-1 text-xs font-bold text-slate-700">{label}</legend><DynamicReportFields value={nested} path={[...path, key]} onChange={onChange} /></fieldset>;
+          if (typeof nested === 'boolean') return <label key={key} className="flex items-center gap-2 rounded-lg border border-slate-100 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={nested} onChange={(event) => onChange([...path, key], event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />{label}</label>;
+          const multiline = /observation|commentaire|precisions|compteRendu|difficultes|solutions|domainesAction|enseignantsParMatiere|devise/i.test(key);
+          const calculated = /^total|^tauxReussite$/i.test(key);
+          return <label key={key} className="block text-xs font-semibold text-slate-600">{label}{typeof nested === 'number' ? <input type="number" min="0" value={nested} readOnly={calculated} onChange={(event) => onChange([...path, key], numberValue(event.target.value))} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm read-only:bg-slate-100 read-only:text-slate-500" /> : multiline ? <textarea value={String(nested ?? '')} onChange={(event) => onChange([...path, key], event.target.value)} rows={3} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /> : <input value={String(nested ?? '')} onChange={(event) => onChange([...path, key], event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />}</label>;
+        })}
+      </div>
+    );
+  }
+  return null;
+}
+
+function StructuredReportPreview({ value, label }: { value: any; label?: string }) {
+  if (Array.isArray(value)) {
+    const isTable = value.length > 0 && value.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.values(item).every((cell) => cell === null || ['string', 'number', 'boolean'].includes(typeof cell)));
+    if (isTable) {
+      const columns = Object.keys(value[0]);
+      return <section className="mt-4"><h3 className="mb-2 text-sm font-bold">{label}</h3><table className="w-full border-collapse text-xs"><thead><tr className="bg-slate-100">{columns.map((key) => <th key={key} className="border border-slate-500 px-2 py-1 text-left">{reportFieldLabel(key)}</th>)}</tr></thead><tbody>{value.map((row, index) => <tr key={index}>{columns.map((key) => <td key={key} className="border border-slate-500 px-2 py-1">{typeof row[key] === 'boolean' ? (row[key] ? 'Oui' : 'Non') : String(row[key] ?? '')}</td>)}</tr>)}</tbody></table></section>;
+    }
+    return <section className="mt-4"><h3 className="mb-2 text-sm font-bold">{label}</h3>{value.map((item, index) => <StructuredReportPreview key={index} value={item} label={`${label || 'Ligne'} ${index + 1}`} />)}</section>;
+  }
+  if (value && typeof value === 'object') {
+    return <section className="mt-4"><h3 className="mb-2 text-sm font-bold">{label}</h3><div className="space-y-3">{Object.entries(value).map(([key, nested]) => (
+      nested && typeof nested === 'object'
+        ? <StructuredReportPreview key={key} value={nested} label={reportFieldLabel(key)} />
+        : <p key={key} className="text-xs"><strong>{reportFieldLabel(key)} :</strong> {typeof nested === 'boolean' ? (nested ? 'Oui' : 'Non') : String(nested ?? '')}</p>
+    ))}</div></section>;
+  }
+  return <p className="text-xs"><strong>{label} :</strong> {String(value ?? '')}</p>;
+}
+
+function structuredReportHtml(value: any, label = ''): string {
+  if (Array.isArray(value)) {
+    const isTable = value.length > 0 && value.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.values(item).every((cell) => cell === null || ['string', 'number', 'boolean'].includes(typeof cell)));
+    if (isTable) {
+      const columns = Object.keys(value[0]);
+      return `<section><h2>${escapeHtml(label)}</h2><table><thead><tr>${columns.map((key) => `<th>${escapeHtml(reportFieldLabel(key))}</th>`).join('')}</tr></thead><tbody>${value.map((row) => `<tr>${columns.map((key) => `<td>${escapeHtml(typeof row[key] === 'boolean' ? (row[key] ? 'Oui' : 'Non') : String(row[key] ?? ''))}</td>`).join('')}</tr>`).join('')}</tbody></table></section>`;
+    }
+    return `<section><h2>${escapeHtml(label)}</h2>${value.map((item, index) => structuredReportHtml(item, `${label || 'Ligne'} ${index + 1}`)).join('')}</section>`;
+  }
+  if (value && typeof value === 'object') {
+    return `<section><h2>${escapeHtml(label)}</h2>${Object.entries(value).map(([key, nested]) => (
+      nested && typeof nested === 'object'
+        ? structuredReportHtml(nested, reportFieldLabel(key))
+        : `<p><b>${escapeHtml(reportFieldLabel(key))} :</b> ${escapeHtml(typeof nested === 'boolean' ? (nested ? 'Oui' : 'Non') : String(nested ?? ''))}</p>`
+    )).join('')}</section>`;
+  }
+  return `<p><b>${escapeHtml(label)} :</b> ${escapeHtml(String(value ?? ''))}</p>`;
+}
+
+const COMPLETE_REPORT_SECTION_TITLES: Record<string, string> = {
+  I_identification: 'I. Identification', II_localisation: 'II. Localisation', III_informationsGenerales: 'III. Informations générales sur l’établissement',
+  IV_personnelEnseignant: 'IV. Personnel enseignant', V_personnelDirection: 'V. Personnel de direction', V_personnelAdministrationVieScolaire: 'V. Personnel d’administration et de la vie scolaire',
+  VI_personnelsSpecifiques: 'VI. Personnels spécifiques', VII_personnelsAppuiSoutien: 'VII. Personnels d’appui et de soutien', VIII_preparationDeroulementRentree: 'VIII. Préparation et déroulement de la rentrée',
+  IX_organesGestion: 'IX. Organes de gestion', X_structuresStatutaires: 'X. Organes et structures statutaires', XI_autresStructures: 'XI. Autres structures', XII_organisationPedagogique: 'XII. Organisation pédagogique',
+  XIII_identificationProfesseurs: 'XIII. Identification et emploi du temps des professeurs', XIV_professeursPrincipaux: 'XIV. Professeurs principaux', XV_matieresSpecifiques: 'XV. Matières spécifiques enseignées',
+  XVI_coursDuSoir: 'XVI. Situation des cours du soir', XVII_situationFinancierePublic: 'XVII. Situation financière (public uniquement)', XVIII_resultatsConcours: 'XVIII. Résultats aux concours', XIX_difficultesSolutions: 'XIX. Difficultés rencontrées et solutions envisagées',
+};
 
 function totalCycle(cycle: any) {
   return (Object.values(cycle || {}) as any[]).reduce((total: number, item: any) => (
@@ -191,12 +335,18 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
   const reportType = reportTypeOf(row);
   const submissionDate = formatSubmissionDate(report.submittedAt);
   const data = normalizeReportData(establishment.type || 'Primaire', report.donnees);
-  const isPrimary = establishment.type === 'Primaire';
+  const isFullTemplateReport = data.modele === 'rapport-rentree-complet-v1';
+  const isFullExitReport = data.modele === 'rapport-sortie-v1';
+  const isPrimary = establishment.type === 'Primaire' && !isFullTemplateReport && !isFullExitReport;
   const totalStudents = isPrimary
     ? Number(data.filles || 0) + Number(data.garcons || 0)
     : totalCycle(data.premierCycle) + totalCycle(data.secondCycle);
   const totalClasses = isPrimary ? Number(data.classes || 0) : totalObjectNumbers(data.classes);
   const totalTeachers = isPrimary ? Number(data.enseignantsEnClasse || 0) : Number(data.enseignants?.hommes || 0) + Number(data.enseignants?.femmes || 0);
+  const reportSections = isFullExitReport ? data.rapportSortie : data.rapportComplet;
+  const completedFields = reportSections
+    ? Object.entries(flatten(reportSections)).filter(([, value]) => value !== '' && value !== 0 && value !== false && value !== null && value !== undefined)
+    : [];
 
   return (
     <div className="page mx-auto min-h-[297mm] w-[210mm] bg-white p-10 text-slate-950 shadow-sm">
@@ -223,9 +373,9 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
       </div>
 
       <div className="my-8 text-center">
-        <h1 className="text-xl font-black uppercase tracking-wide">Rapport scolaire annuel</h1>
+        <h1 className="text-xl font-black uppercase tracking-wide">{isFullTemplateReport ? 'Rapport de rentrée de l’établissement' : isFullExitReport ? 'Rapport de sortie de l’année scolaire' : 'Rapport scolaire annuel'}</h1>
         <p className="mt-2 text-sm font-bold text-blue-800">{REPORT_TYPE_LABELS[reportType]}</p>
-        <p className="mt-1 text-xs text-slate-500">Document transmis aux Directeurs DGSS et DSE pour examen administratif</p>
+        <p className="mt-1 text-xs text-slate-500">{report.statut === 'Récapitulatif à vérifier' ? 'Vérification par l’agent avant transmission' : 'Document transmis aux Directeurs DGSS et DSE pour examen administratif'}</p>
       </div>
 
       <div className="grid grid-cols-2 gap-3 text-sm">
@@ -237,7 +387,7 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
         <div className="rounded-lg border border-slate-300 p-3"><span className="font-bold">Date de transmission : </span>{submissionDate}</div>
       </div>
 
-      <h2 className="mt-8 border-b border-slate-300 pb-2 text-sm font-black uppercase">Synthese generale</h2>
+      {!isFullTemplateReport && !isFullExitReport && <><h2 className="mt-8 border-b border-slate-300 pb-2 text-sm font-black uppercase">Synthese generale</h2>
       <table className="mt-3 w-full border-collapse text-sm">
         <thead><tr className="bg-slate-100"><th className="border border-slate-700 px-3 py-2 text-left">Indicateur</th><th className="border border-slate-700 px-3 py-2 text-left">Valeur</th></tr></thead>
         <tbody>
@@ -274,6 +424,15 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
         </>
       )}
 
+      </>}
+
+      {isFullTemplateReport && <section className="mt-8">{Object.entries(data.rapportComplet).map(([key, section]) => <StructuredReportPreview key={key} value={section} label={COMPLETE_REPORT_SECTION_TITLES[key] || reportFieldLabel(key)} />)}</section>}
+      {isFullExitReport && <section className="mt-8">{Object.entries(data.rapportSortie).map(([key, section]) => <StructuredReportPreview key={key} value={section} label={reportFieldLabel(key)} />)}</section>}
+      {!isFullTemplateReport && !isFullExitReport && completedFields.length > 0 && <section className="mt-8">
+        <h2 className="border-b border-slate-300 pb-2 text-sm font-black uppercase">{isFullTemplateReport ? 'Rapport de rentrée officiel' : isFullExitReport ? 'Bilan de sortie' : 'Complément du rapport de rentrée'}</h2>
+        <table className="mt-3 w-full border-collapse text-xs"><tbody>{completedFields.map(([field, value]) => <tr key={field}><td className="w-1/2 border border-slate-500 px-2 py-1 font-semibold">{String(field).replace(/^\w+\./, '').replace(/[._]/g, ' ')}</td><td className="border border-slate-500 px-2 py-1">{String(value)}</td></tr>)}</tbody></table>
+      </section>}
+
       <div className="mt-12 flex justify-between text-sm">
         <div><p className="font-bold underline">Agent declarant</p><p className="mt-2 text-slate-500">Signature electronique</p></div>
         <div className="text-right"><p className="font-bold underline">Administration DGSS / DSE</p><p className="mt-2 text-slate-500">Visa et examen du rapport</p></div>
@@ -282,26 +441,28 @@ function AnnualReportPdfPreview({ row }: { row: any }) {
   );
 }
 
-export default function RapportsAnnuels() {
+export default function RapportsAnnuels({ initialType = 'entree' }: { initialType?: ReportType }) {
   const { token, user } = useAuth();
   const isSuperAdmin = hasAnyRole(user?.role, SUPER_ADMIN_ROLES);
   const isDse = hasAnyRole(user?.role, DSE_ROLES);
   const isDgss = hasAnyRole(user?.role, DGSS_ROLES);
   const isProviseur = hasAnyRole(user?.role, [ROLES.PROVISEUR]);
   const isPrimaryDirector = hasAnyRole(user?.role, [ROLES.DIRECTEUR_ECOLE]);
-  const canEdit = isDse || isPrimaryDirector || isProviseur;
+  const canEdit = isPrimaryDirector || isProviseur;
   const canAdminExport = isSuperAdmin || isDse || isDgss;
   const canSeeReports = isSuperAdmin || isDse || isDgss || hasAnyRole(user?.role, LOCAL_SCHOOL_ROLES);
   const [etablissements, setEtablissements] = useState<any[]>([]);
   const [reports, setReports] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [anneeScolaire, setAnneeScolaire] = useState(DEFAULT_SCHOOL_YEAR);
-  const [typeRapport, setTypeRapport] = useState<ReportType>('entree');
+  const [typeRapport, setTypeRapport] = useState<ReportType>(initialType);
   const [donnees, setDonnees] = useState<any>(emptyReport('Primaire'));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [pdfReport, setPdfReport] = useState<any | null>(null);
+  const [recapOpen, setRecapOpen] = useState(false);
+  const [reviewValidated, setReviewValidated] = useState(false);
   const selectedEtablissement = etablissements.find((item) => String(item.id) === selectedId);
   // Normalize before rendering so a type change cannot expose a partial report
   // during the render between selectedId and the synchronization effect.
@@ -334,6 +495,8 @@ export default function RapportsAnnuels() {
   };
 
   useEffect(() => { load(); }, [token]);
+  useEffect(() => { setTypeRapport(initialType); }, [initialType]);
+  useEffect(() => { setReviewValidated(false); }, [selectedId, anneeScolaire, typeRapport, donnees]);
 
   useEffect(() => {
     const existing = reports.find((row) => row.report?.etablissementId === Number(selectedId) && row.report?.anneeScolaire === anneeScolaire && reportTypeOf(row) === typeRapport);
@@ -341,10 +504,57 @@ export default function RapportsAnnuels() {
     setDonnees(normalizeReportData(type, existing?.report?.donnees));
   }, [selectedId, anneeScolaire, typeRapport, selectedEtablissement?.type, reports]);
 
-  const setValue = (path: string[], value: number) => setDonnees((current: any) => setPath(current, path, value));
+  const setComplementValue = (path: string[], value: unknown) => setDonnees((current: any) => {
+    const next = setPath(current, ['rapportComplet', ...path], value);
+    const [section, group, rowIndex, field] = path;
+    if (section === 'III_informationsGenerales' && ['postPrimaire', 'secondaire'].includes(group) && /^\d+$/.test(rowIndex || '')) {
+      const rows = next.rapportComplet[section][group];
+      const row = rows[Number(rowIndex)];
+      if (row) row.total = numberValue(row.filles) + numberValue(row.garcons);
+      const totals = rows.reduce((sum: any, item: any) => ({
+        filles: sum.filles + numberValue(item.filles), garcons: sum.garcons + numberValue(item.garcons),
+        total: sum.total + numberValue(item.total), nombreClasses: sum.nombreClasses + numberValue(item.nombreClasses),
+      }), { filles: 0, garcons: 0, total: 0, nombreClasses: 0 });
+      next.rapportComplet[section].recapitulatif[group] = { ...next.rapportComplet[section].recapitulatif[group], ...totals };
+    }
+    if (section === 'IV_personnelEnseignant' && ['public', 'prive'].includes(group) && /^\d+$/.test(rowIndex || '') && field !== 'totalPourvu') {
+      const row = next.rapportComplet[section][group][Number(rowIndex)];
+      row.permanentsTotal = numberValue(row.permanentsF) + numberValue(row.permanentsH);
+      row.nonPermanentsTotal = numberValue(row.nonPermanentsF) + numberValue(row.nonPermanentsH);
+      row.vacatairesTotal = numberValue(row.vacatairesF) + numberValue(row.vacatairesH);
+      row.totalPourvu = numberValue(row.permanentsTotal) + numberValue(row.nonPermanentsTotal) + numberValue(row.vacatairesTotal);
+    }
+    return next;
+  });
+  const setExitValue = (path: string[], value: unknown) => setDonnees((current: any) => {
+    const next = setPath(current, ['rapportSortie', ...path], value);
+    const [group, list, rowIndex] = path;
+    if (/^\d+$/.test(rowIndex || '') || (group === 'resultatsScolaires' && /^\d+$/.test(list || ''))) {
+      const row = group === 'resultatsScolaires'
+        ? next.rapportSortie[group][Number(list)]
+        : next.rapportSortie[group]?.[list]?.[Number(rowIndex)];
+      if (row && group === 'effectifsFinaux' && list === 'parNiveau') {
+        row.totalInscrits = numberValue(row.fillesInscrites) + numberValue(row.garconsInscrits);
+        row.totalPresents = numberValue(row.fillesPresentes) + numberValue(row.garconsPresents);
+        row.totalDeparts = numberValue(row.departsFilles) + numberValue(row.departsGarcons);
+      }
+      if (row && group === 'resultatsScolaires') {
+        row.totalAdmis = numberValue(row.fillesAdmis) + numberValue(row.garconsAdmis);
+        row.totalRedoublants = numberValue(row.fillesRedoublantes) + numberValue(row.garconsRedoublants);
+        row.totalExclus = numberValue(row.fillesExclues) + numberValue(row.garconsExclus);
+        row.tauxReussite = row.effectifExamine ? Math.round((row.totalAdmis / row.effectifExamine) * 10000) / 100 : 0;
+      }
+      if (row && ['enseignants', 'administrationEtAppui'].includes(list)) row.total = numberValue(row.femmes) + numberValue(row.hommes);
+    }
+    return next;
+  });
 
   const save = async (action: 'save' | 'submit') => {
     if (!token || !selectedId) return;
+    if (action === 'submit' && !reviewValidated) {
+      setMessage('Ouvrez le récapitulatif et validez les informations avant de transmettre le rapport.');
+      return;
+    }
     setSaving(true);
     setMessage('');
     try {
@@ -355,13 +565,18 @@ export default function RapportsAnnuels() {
           etablissementId: Number(selectedId),
           anneeScolaire,
           typeRapport,
-          donnees: sanitizeReportData(selectedEtablissement?.type || 'Primaire', typeRapport, formDonnees),
-          action
+          donnees: sanitizeReportData(formDonnees, typeRapport),
+          action,
+          validated: action === 'submit' && reviewValidated
         })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Erreur lors de la sauvegarde.');
       setMessage(action === 'submit' ? 'Rapport transmis pour validation.' : 'Brouillon enregistre.');
+      if (action === 'submit') {
+        setRecapOpen(false);
+        setReviewValidated(false);
+      }
       await load();
     } catch (error: any) {
       setMessage(error.message);
@@ -372,10 +587,12 @@ export default function RapportsAnnuels() {
 
   const decide = async (id: number, decision: 'approuver' | 'valider' | 'rejeter') => {
     if (!token) return;
+    const commentaire = decision === 'rejeter' ? window.prompt('Indiquez le motif du rejet et les corrections attendues :') : null;
+    if (decision === 'rejeter' && !commentaire?.trim()) return;
     const response = await apiFetch(`/api/annual-reports/${id}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ decision })
+      body: JSON.stringify({ decision, commentaire: commentaire?.trim() })
     });
     const result = await response.json();
     if (!response.ok) return setMessage(result.error || 'Action impossible.');
@@ -434,6 +651,26 @@ export default function RapportsAnnuels() {
       workbook,
       `SGSIS_${reportType}_${safeFileName(establishment.nom || '')}_${safeFileName(String(report.anneeScolaire || 'annee'))}.xlsx`,
     );
+  };
+
+  const exportWordReport = (row: any) => {
+    const report = row.report;
+    const establishment = row.etablissement || {};
+    const reportType = reportTypeOf(row);
+    const reportData = normalizeReportData(establishment.type || 'Primaire', report.donnees);
+    const isFullReport = reportData.modele === 'rapport-rentree-complet-v1' || reportData.modele === 'rapport-sortie-v1';
+    const sections = reportType === 'entree' ? reportData.rapportComplet : reportData.rapportSortie;
+    const values = isFullReport
+      ? Object.entries(sections || {}).map(([key, section]) => structuredReportHtml(section, COMPLETE_REPORT_SECTION_TITLES[key] || reportFieldLabel(key))).join('')
+      : `<table>${Object.entries(flatten(reportData)).filter(([key]) => key !== 'modele').map(([key, value]) => `<tr><th>${escapeHtml(key.replace(/[._]/g, ' '))}</th><td>${escapeHtml(String(value ?? ''))}</td></tr>`).join('')}</table>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(REPORT_TYPE_LABELS[reportType])}</title><style>body{font-family:Arial,sans-serif;color:#172033}h1{text-align:center}h2{margin-top:24px;background:#eef2f7;padding:8px}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{border:1px solid #555;padding:6px;text-align:left;vertical-align:top}th{background:#eef2f7}</style></head><body><h1>${escapeHtml(REPORT_TYPE_LABELS[reportType])}</h1><p><b>Établissement :</b> ${escapeHtml(establishment.nom || '')} | <b>Année scolaire :</b> ${escapeHtml(String(report.anneeScolaire || ''))} | <b>Statut :</b> ${escapeHtml(report.statut || '')}</p>${values}</body></html>`;
+    const blob = new Blob([html], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `SGSIS_${reportType}_${safeFileName(establishment.nom || '')}_${safeFileName(String(report.anneeScolaire || 'annee'))}.doc`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const printPdfReport = async () => {
@@ -534,7 +771,7 @@ export default function RapportsAnnuels() {
       <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-3xl font-black text-slate-900">Rapports scolaires annuels</h1>
-          <p className="mt-1 text-sm text-slate-500">Saisie, validation et synthese des donnees de rentree et de fin d'annee.</p>
+          <p className="mt-1 text-sm text-slate-500">Saisie, transmission, validation et export des rapports de rentrée et de sortie.</p>
         </div>
         <div className="flex flex-wrap gap-2 print:hidden">
           {canAdminExport && <button onClick={exportExcel} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white"><FileSpreadsheet className="h-4 w-4" /> Excel</button>}
@@ -550,80 +787,47 @@ export default function RapportsAnnuels() {
         </section>
       )}
 
-      <fieldset disabled={!canEdit} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
+      <fieldset disabled={!canEdit || (typeRapport === 'entree' && selectedEtablissement?.type !== 'Secondaire')} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
         <div className="grid gap-4 md:grid-cols-4">
-          <label className="text-xs font-bold text-slate-600">Annee scolaire
+          <label className="text-xs font-bold text-slate-600">Année scolaire
             <select value={anneeScolaire} onChange={(event) => setAnneeScolaire(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 p-2 text-sm">{SCHOOL_YEARS.map((schoolYear) => <option key={schoolYear} value={schoolYear}>{schoolYear}</option>)}</select>
           </label>
-          <label className="text-xs font-bold text-slate-600">Type de rapport
-            <select value={typeRapport} onChange={(event) => setTypeRapport(event.target.value as ReportType)} className="mt-1 block w-full rounded-lg border border-slate-200 p-2 text-sm">{REPORT_TYPES.map((reportType) => <option key={reportType} value={reportType}>{REPORT_TYPE_LABELS[reportType]}</option>)}</select>
+          <label className="text-xs font-bold text-slate-600">Rapport
+            <select value={typeRapport} onChange={(event) => setTypeRapport(event.target.value as ReportType)} className="mt-1 block w-full rounded-lg border border-slate-200 p-2 text-sm">{REPORT_TYPES.map((key) => <option key={key} value={key}>{REPORT_TYPE_LABELS[key]}</option>)}</select>
           </label>
-          <label className="text-xs font-bold text-slate-600">Etablissement
-            <select value={selectedId} disabled={!isDse && !isSuperAdmin} onChange={(event) => setSelectedId(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 p-2 text-sm disabled:bg-slate-100"><option value="">Selectionner</option>{etablissements.map((etab) => <option key={etab.id} value={etab.id}>{etab.nom} - {etab.arrondissement}</option>)}</select>
+          <label className="text-xs font-bold text-slate-600">Établissement
+            <select value={selectedId} disabled={!isDse && !isSuperAdmin} onChange={(event) => setSelectedId(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-200 p-2 text-sm disabled:bg-slate-100"><option value="">Sélectionner</option>{etablissements.map((etab) => <option key={etab.id} value={etab.id}>{etab.nom} - {etab.arrondissement}</option>)}</select>
           </label>
-          <div className="flex items-end gap-2"><button disabled={saving || !selectedId || !canEdit} onClick={() => save('save')} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-50"><Save className="h-4 w-4" /> Brouillon</button><button disabled={saving || !selectedId || !canEdit} onClick={() => save('submit')} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"><Send className="h-4 w-4" /> Transmettre</button></div>
+          <div className="flex flex-wrap items-end gap-2"><button disabled={saving || !selectedId || !canEdit || (typeRapport === 'entree' && selectedEtablissement?.type !== 'Secondaire')} onClick={() => save('save')} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-50"><Save className="h-4 w-4" /> Brouillon</button><button disabled={saving || !selectedId || !canEdit || (typeRapport === 'entree' && selectedEtablissement?.type !== 'Secondaire')} onClick={() => setRecapOpen(true)} className="inline-flex items-center gap-2 rounded-lg border border-indigo-300 px-4 py-2 text-sm font-bold text-indigo-800 disabled:opacity-50"><Eye className="h-4 w-4" /> Récapitulatif</button><button disabled={saving || !selectedId || !canEdit || !reviewValidated || (typeRapport === 'entree' && selectedEtablissement?.type !== 'Secondaire')} onClick={() => save('submit')} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"><Send className="h-4 w-4" /> Transmettre</button></div>
         </div>
-        {selectedEtablissement?.type === 'Primaire' ? (
-          <div className="mt-6 space-y-5">
-            <h3 className="font-bold text-slate-900">{typeRapport === 'entree' ? "Ecole primaire : rapport d'entree" : 'Ecole primaire : rapport de fin de cycle et CEP'}</h3>
-            <div className="grid gap-4 md:grid-cols-4"><NumericField label="Classes" value={formDonnees.classes} onChange={(value) => setValue(['classes'], value)} /><NumericField label="Enseignants en classe" value={formDonnees.enseignantsEnClasse} onChange={(value) => setValue(['enseignantsEnClasse'], value)} /><NumericField label="Eleves filles" value={formDonnees.filles} onChange={(value) => setValue(['filles'], value)} /><NumericField label="Eleves garcons" value={formDonnees.garcons} onChange={(value) => setValue(['garcons'], value)} /></div>
-            {typeRapport === 'fin_cycle' && <>
-              <div className="rounded-lg bg-slate-50 p-4"><h4 className="mb-3 text-sm font-bold text-slate-800">Resultats CM2 - CEP</h4><div className="grid gap-4 md:grid-cols-4"><NumericField label="Candidats filles" value={formDonnees.cep.candidatsFilles} onChange={(value) => setValue(['cep', 'candidatsFilles'], value)} /><NumericField label="Candidats garcons" value={formDonnees.cep.candidatsGarcons} onChange={(value) => setValue(['cep', 'candidatsGarcons'], value)} /><NumericField label="Admis filles" value={formDonnees.cep.admisFilles} onChange={(value) => setValue(['cep', 'admisFilles'], value)} /><NumericField label="Admis garcons" value={formDonnees.cep.admisGarcons} onChange={(value) => setValue(['cep', 'admisGarcons'], value)} /></div></div>
-              {(['cepAvecLibres', 'cepSansLibres'] as const).map((key) => <div key={key} className="rounded-lg bg-slate-50 p-4"><h4 className="mb-3 text-sm font-bold text-slate-800">Detail CEP {key === 'cepAvecLibres' ? 'avec candidats libres' : 'sans candidats libres'}</h4><div className="grid gap-4 md:grid-cols-4"><NumericField label="Presents filles" value={formDonnees[key].presentsFilles} onChange={(value) => setValue([key, 'presentsFilles'], value)} /><NumericField label="Presents garcons" value={formDonnees[key].presentsGarcons} onChange={(value) => setValue([key, 'presentsGarcons'], value)} /><NumericField label="Admis filles" value={formDonnees[key].admisFilles} onChange={(value) => setValue([key, 'admisFilles'], value)} /><NumericField label="Admis garcons" value={formDonnees[key].admisGarcons} onChange={(value) => setValue([key, 'admisGarcons'], value)} /></div></div>)}
-            </>}
-          </div>
-        ) : selectedEtablissement ? (
-          <div className="mt-6 space-y-5">
-            <h3 className="font-bold text-slate-900">{typeRapport === 'entree' ? "Etablissement secondaire : rapport d'entree" : 'Etablissement secondaire : rapport de fin de cycle et examens'}</h3>
-            <div><h4 className="mb-3 text-sm font-bold text-slate-700">Classes ouvertes par niveau</h4><div className="grid gap-4 sm:grid-cols-2 md:grid-cols-5">{CLASS_LEVELS.map((level) => <NumericField key={level} label={level} value={formDonnees.classes[level]} onChange={(value) => setValue(['classes', level], value)} />)}</div></div>
-            <div><h4 className="mb-3 text-sm font-bold text-slate-700">Effectifs du premier et du second cycle</h4><div className="grid gap-4 md:grid-cols-2">{[...CYCLE_LEVELS.map((level) => ['premierCycle', level] as string[]), ...SECOND_CYCLE_LEVELS.map((level) => ['secondCycle', level] as string[])].map(([cycle, level]) => <div key={`${cycle}-${level}`} className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3"><span className="col-span-2 text-xs font-bold text-slate-700">{level}</span><NumericField label="Filles" value={formDonnees[cycle][level].filles} onChange={(value) => setValue([cycle, level, 'filles'], value)} /><NumericField label="Garcons" value={formDonnees[cycle][level].garcons} onChange={(value) => setValue([cycle, level, 'garcons'], value)} /></div>)}</div></div>
-            <div className="grid gap-4 md:grid-cols-2"><NumericField label="Enseignants hommes" value={formDonnees.enseignants.hommes} onChange={(value) => setValue(['enseignants', 'hommes'], value)} /><NumericField label="Enseignantes femmes" value={formDonnees.enseignants.femmes} onChange={(value) => setValue(['enseignants', 'femmes'], value)} /></div>
-            {typeRapport === 'fin_cycle' && SECONDARY_EXAMS.map((key) => <div key={key} className="rounded-lg bg-slate-50 p-4"><h4 className="mb-3 text-sm font-bold text-slate-800">Resultats {SECONDARY_EXAM_LABELS[key]}</h4><div className="grid gap-4 md:grid-cols-4"><NumericField label="Candidats filles" value={formDonnees[key].candidatsFilles} onChange={(value) => setValue([key, 'candidatsFilles'], value)} /><NumericField label="Candidats garcons" value={formDonnees[key].candidatsGarcons} onChange={(value) => setValue([key, 'candidatsGarcons'], value)} /><NumericField label="Admis filles" value={formDonnees[key].admisFilles} onChange={(value) => setValue([key, 'admisFilles'], value)} /><NumericField label="Admis garcons" value={formDonnees[key].admisGarcons} onChange={(value) => setValue([key, 'admisGarcons'], value)} /></div></div>)}
-          </div>
-        ) : <p className="mt-6 text-sm text-slate-500">Aucun etablissement rattache a ce compte.</p>}
-      </fieldset>
-
-      {canAdminExport && (
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-bold text-slate-900">Rapports reçus par les administrateurs à examiner</h2>
-              <p className="text-xs text-slate-500">Chaque rapport transmis par une structure scolaire peut être téléchargé individuellement au format PDF ou Excel.</p>
-            </div>
-            <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">{reports.filter((row) => row.report?.statut !== 'Brouillon').length} recu(s)</span>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {loading ? (
-              <p className="p-5 text-sm text-slate-500">Chargement...</p>
-            ) : reports.filter((row) => row.report?.statut !== 'Brouillon').length === 0 ? (
-              <p className="p-5 text-sm text-slate-500">Aucun rapport transmis aux admins.</p>
-            ) : reports.filter((row) => row.report?.statut !== 'Brouillon').map((row) => (
-              <div key={`pdf-${row.report.id}`} className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="font-bold text-slate-900">{row.etablissement?.nom || `Etablissement #${row.report.etablissementId}`}</p>
-                  <p className="text-xs text-slate-500">{row.report.anneeScolaire} - {REPORT_TYPE_LABELS[reportTypeOf(row)]} - {row.etablissement?.type || 'Type non renseigne'} - {row.etablissement?.arrondissement || 'Arrondissement non renseigne'}</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{row.report.statut}</span>
-                  <button onClick={() => setPdfReport(row)} className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800">
-                    <Eye className="h-3 w-3" /> Ouvrir / examiner
-                  </button>
-                  <button onClick={() => { setPdfReport(row); setTimeout(printPdfReport, 100); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50">
-                    <Download className="h-3 w-3" /> Télécharger PDF
-                  </button>
-                  <button onClick={() => exportExcelReport(row)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-50">
-                    <FileSpreadsheet className="h-3 w-3" /> Télécharger Excel
-                  </button>
-                </div>
-              </div>
+        {typeRapport === 'entree' && selectedEtablissement?.type === 'Secondaire' ? (
+          <section className="mt-6 space-y-4">
+            <div><h2 className="text-lg font-black text-slate-900">Rapport de rentrée de l’établissement</h2><p className="mt-1 text-sm text-slate-500">Formulaire basé sur le document officiel transmis. Renseignez chaque rubrique et ajoutez les lignes nécessaires dans les tableaux.</p></div>
+            {Object.entries(formDonnees.rapportComplet || {}).map(([sectionKey, sectionData], index) => (
+              <details key={sectionKey} open={index === 0} className="group rounded-xl border border-slate-200 bg-white">
+                <summary className="cursor-pointer list-none px-4 py-3 font-bold text-slate-800 marker:hidden hover:bg-slate-50">{COMPLETE_REPORT_SECTION_TITLES[sectionKey] || reportFieldLabel(sectionKey)}</summary>
+                <div className="border-t border-slate-100 p-4"><DynamicReportFields value={sectionData} path={[sectionKey]} onChange={setComplementValue} /></div>
+              </details>
             ))}
-          </div>
-        </section>
-      )}
+          </section>
+        ) : typeRapport === 'fin_cycle' && selectedEtablissement ? (
+          <section className="mt-6 space-y-4">
+            <div><h2 className="text-lg font-black text-slate-900">Bilan de sortie de l’année scolaire</h2><p className="mt-1 text-sm text-slate-500">Formulaire de bilan proposé dans SGSIS, en attendant un modèle officiel de rapport de sortie. Les totaux et taux sont conservés par rubrique pour faciliter leur exploitation.</p></div>
+            {Object.entries(formDonnees.rapportSortie || {}).map(([sectionKey, sectionData], index) => (
+              <details key={sectionKey} open={index === 0} className="group rounded-xl border border-slate-200 bg-white">
+                <summary className="cursor-pointer list-none px-4 py-3 font-bold text-slate-800 marker:hidden hover:bg-slate-50">{reportFieldLabel(sectionKey)}</summary>
+                <div className="border-t border-slate-100 p-4"><DynamicReportFields value={sectionData} path={[sectionKey]} onChange={setExitValue} /></div>
+              </details>
+            ))}
+          </section>
+        ) : selectedEtablissement ? (
+          <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Le formulaire transmis concerne les établissements secondaires. Les anciens rapports des écoles primaires restent consultables dans l’historique.</div>
+        ) : <p className="mt-6 text-sm text-slate-500">Aucun établissement rattaché à ce compte.</p>}
+      </fieldset>
 
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 px-5 py-4"><h2 className="font-bold text-slate-900">Dossiers transmis</h2></div>
-        <div className="divide-y divide-slate-100">{loading ? <p className="p-5 text-sm text-slate-500">Chargement...</p> : reports.length === 0 ? <p className="p-5 text-sm text-slate-500">Aucun rapport annuel.</p> : reports.map((row) => <div key={row.report.id} className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between"><div><p className="font-bold text-slate-900">{row.etablissement?.nom || `Etablissement #${row.report.etablissementId}`}</p><p className="text-xs text-slate-500">{row.report.anneeScolaire} · {REPORT_TYPE_LABELS[reportTypeOf(row)]} · {row.etablissement?.type} · {row.etablissement?.arrondissement}</p></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{row.report.statut}</span><button onClick={() => { setPdfReport(row); setTimeout(printPdfReport, 100); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download className="h-3 w-3" /> PDF</button><button onClick={() => exportExcelReport(row)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-50"><FileSpreadsheet className="h-3 w-3" /> Excel</button>{isProviseur && row.report.statut === 'Soumis au proviseur' && <button onClick={() => decide(row.report.id, 'approuver')} className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white"><Check className="h-3 w-3" /> Approuver</button>}{isDse && row.report.statut === 'Soumis au DSE' && <><button onClick={() => decide(row.report.id, 'valider')} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"><Check className="h-3 w-3" /> Valider</button><button onClick={() => decide(row.report.id, 'rejeter')} className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white"><X className="h-3 w-3" /> Rejeter</button></>}</div></div>)}</div>
+        <div className="divide-y divide-slate-100">{loading ? <p className="p-5 text-sm text-slate-500">Chargement...</p> : reports.length === 0 ? <p className="p-5 text-sm text-slate-500">Aucun rapport annuel.</p> : reports.map((row) => <div key={row.report.id} className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between"><div><p className="font-bold text-slate-900">{row.etablissement?.nom || `Etablissement #${row.report.etablissementId}`}</p><p className="text-xs text-slate-500">{row.report.anneeScolaire} · {REPORT_TYPE_LABELS[reportTypeOf(row)]} · {row.etablissement?.type} · {row.etablissement?.arrondissement}</p></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{row.report.statut}</span><button onClick={() => { setPdfReport(row); setTimeout(printPdfReport, 100); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"><Download className="h-3 w-3" /> PDF</button><button onClick={() => exportWordReport(row)} className="inline-flex items-center gap-1 rounded-lg border border-blue-300 px-3 py-1.5 text-xs font-bold text-blue-800 hover:bg-blue-50"><FileText className="h-3 w-3" /> Word</button><button onClick={() => exportExcelReport(row)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-50"><FileSpreadsheet className="h-3 w-3" /> Excel</button>{isProviseur && row.report.statut === 'Soumis au proviseur' && <button onClick={() => decide(row.report.id, 'approuver')} className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white"><Check className="h-3 w-3" /> Approuver</button>}{isDse && row.report.statut === 'Soumis au DSE' && <><button onClick={() => decide(row.report.id, 'valider')} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"><Check className="h-3 w-3" /> Valider</button><button onClick={() => decide(row.report.id, 'rejeter')} className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white"><X className="h-3 w-3" /> Rejeter</button></>}</div></div>)}</div>
       </section>
 
       {pdfReport && (
@@ -641,7 +845,7 @@ export default function RapportsAnnuels() {
                 <button onClick={printPdfReport} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white">
                   <Download className="h-4 w-4" /> Telecharger PDF
                 </button>
-                <button onClick={() => exportExcelReport(pdfReport)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white">
+                <button onClick={() => exportWordReport(pdfReport)} className="inline-flex items-center gap-2 rounded-lg border border-blue-300 px-4 py-2 text-sm font-bold text-blue-800"><FileText className="h-4 w-4" /> Word</button><button onClick={() => exportExcelReport(pdfReport)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white">
                   <FileSpreadsheet className="h-4 w-4" /> Télécharger Excel
                 </button>
                 <button onClick={() => setPdfReport(null)} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">
@@ -652,6 +856,42 @@ export default function RapportsAnnuels() {
             <div className="overflow-auto bg-slate-100 p-5">
               <div id="annual-report-pdf">
                 <AnnualReportPdfPreview row={pdfReport} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {recapOpen && selectedEtablissement && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-3 sm:p-6 print:hidden">
+          <div className="flex max-h-[96vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+              <div>
+                <h3 className="font-bold text-slate-900">Récapitulatif avant transmission</h3>
+                <p className="text-xs text-slate-500">Relisez toutes les rubriques et corrigez les données avant de confirmer.</p>
+              </div>
+              <button onClick={() => setRecapOpen(false)} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700"><X className="h-4 w-4" /> Fermer</button>
+            </div>
+            <div className="overflow-auto bg-slate-100 p-4 sm:p-6">
+              <AnnualReportPdfPreview row={{
+                etablissement: selectedEtablissement,
+                report: {
+                  id: 'BROUILLON',
+                  etablissementId: Number(selectedId),
+                  anneeScolaire,
+                  typeRapport,
+                  statut: 'Récapitulatif à vérifier',
+                  donnees: sanitizeReportData(formDonnees, typeRapport),
+                  submittedAt: null,
+                },
+              }} />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4">
+              <button onClick={() => { setReviewValidated(false); setRecapOpen(false); }} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700"><Pencil className="h-4 w-4" /> Modifier les informations</button>
+              <div className="flex flex-wrap items-center gap-2">
+                {reviewValidated && <span className="inline-flex items-center gap-1 text-sm font-bold text-emerald-700"><Check className="h-4 w-4" /> Informations validées</span>}
+                <button onClick={() => setReviewValidated(true)} disabled={reviewValidated} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"><Check className="h-4 w-4" /> Valider les informations</button>
+                <button onClick={() => save('submit')} disabled={saving || !reviewValidated} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"><Send className="h-4 w-4" /> Transmettre à la DSE</button>
               </div>
             </div>
           </div>

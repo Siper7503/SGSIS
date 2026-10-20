@@ -160,6 +160,7 @@ export const annualReports = pgTable('annual_reports', {
   typeRapport: text('type_rapport').notNull().default('entree'),
   statut: text('statut').notNull().default('Brouillon'),
   donnees: jsonb('donnees').notNull().default({}),
+  commentaireRejet: text('commentaire_rejet'),
   createdById: integer('created_by_id').references(() => users.id),
   submittedById: integer('submitted_by_id').references(() => users.id),
   validatedById: integer('validated_by_id').references(() => users.id),

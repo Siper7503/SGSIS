@@ -26,11 +26,13 @@ import Audit from './pages/Audit.tsx';
 import RapportsAnnuels from './pages/RapportsAnnuels.tsx';
 import PublicAnnualReports from './pages/PublicAnnualReports.tsx';
 import Statistiques from './pages/Statistiques.tsx';
+import ReviewQueue from './pages/ReviewQueue.tsx';
+import Rejections from './pages/Rejections.tsx';
 import { ROLES, hasAnyRole } from './lib/roles.ts';
 
-function AnnualReportsRoute() {
+function AnnualReportsRoute({ initialType = 'entree' }: { initialType?: 'entree' | 'fin_cycle' }) {
   const { user } = useAuth();
-  return hasAnyRole(user?.role, [ROLES.USER]) ? <PublicAnnualReports /> : <RapportsAnnuels />;
+  return hasAnyRole(user?.role, [ROLES.USER]) ? <PublicAnnualReports /> : <RapportsAnnuels initialType={initialType} />;
 }
 
 
@@ -51,6 +53,8 @@ export default function App() {
             <Route path="rapports" element={<Rapports />} />
             <Route path="statistiques" element={<Statistiques />} />
             <Route path="rapports-annuels" element={<AnnualReportsRoute />} />
+            <Route path="rapport-rentree" element={<AnnualReportsRoute initialType="entree" />} />
+            <Route path="rapport-sortie" element={<AnnualReportsRoute initialType="fin_cycle" />} />
             <Route path="carte" element={<Carte />} />
             <Route path="predictions" element={<Predictions />} />
             <Route path="maintenance" element={<Maintenance />} />
@@ -58,6 +62,8 @@ export default function App() {
             <Route path="tice" element={<Tice />} />
             <Route path="audit" element={<Audit />} />
             <Route path="admin" element={<Admin />} />
+            <Route path="file-attente" element={<ReviewQueue />} />
+            <Route path="rejets" element={<Rejections />} />
             <Route path="*" element={<div className="p-8 text-center text-gray-500">Module en cours de développement...</div>} />
           </Route>
         </Routes>

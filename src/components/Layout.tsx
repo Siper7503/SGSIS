@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthProvider.tsx';
 import { Login } from './Login.tsx';
-import { ArrowLeft, Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Briefcase, Map as MapIcon, Sparkles, Menu, X, WifiOff, AlertTriangle, Droplets, Monitor, ShieldAlert, UserCircle, KeyRound, Eye, EyeOff, Search, ChevronDown, BarChart3 } from 'lucide-react';
+import { ArrowLeft, Building2, Home, Users, Hammer, Mail, FileText, Settings, LogOut, Briefcase, Map as MapIcon, Sparkles, Menu, X, WifiOff, AlertTriangle, Droplets, Monitor, ShieldAlert, UserCircle, KeyRound, Eye, EyeOff, Search, ChevronDown, BarChart3, ClipboardList, FileX2 } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { getQueuedActions, syncData } from '../lib/sync.ts';
 import { apiFetch } from '../lib/api.ts';
@@ -28,11 +28,16 @@ const navigation = [
   { name: 'Équipements (TICE)', href: '/tice', icon: Monitor },
   { name: 'Communications (M6)', href: '/communications', icon: Mail },
   { name: 'Rapports (M7)', href: '/rapports', icon: FileText },
-  { name: 'Rapports scolaires annuels', href: '/rapports-annuels', icon: FileText },
+  { name: 'Rapport de rentrée', href: '/rapport-rentree', icon: FileText },
+  { name: 'Rapport de sortie', href: '/rapport-sortie', icon: FileText },
   { name: 'Prédictions IA', href: '/predictions', icon: Sparkles },
   { name: 'Journal Audit', href: '/audit', icon: ShieldAlert },
   { name: 'Administration (M8)', href: '/admin', icon: Settings },
+  { name: 'File d’attente', href: '/file-attente', icon: ClipboardList },
+  { name: 'Rejets', href: '/rejets', icon: FileX2 },
 ];
+
+const LOCAL_AGENT_SEARCH_PATHS = ['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapport-rentree', '/rapport-sortie', '/rapports-annuels', '/rejets'];
 
 export function Layout() {
   const { user, loading, token, logout, setSecureSession } = useAuth();
@@ -225,8 +230,9 @@ export function Layout() {
   const isLocalActor = hasAnyRole(role, LOCAL_SCHOOL_ROLES);
   const isVisitor = hasAnyRole(role, [ROLES.USER]);
   const isAdministrator = isSuperAdmin || isDgssAdmin || isDseAdmin;
+  const isStaffLayout = isAdministrator || isLocalActor;
 
-  if (isVisitor && !['/', '/etablissements', '/rapports-annuels'].includes(currentPath)) {
+  if (isVisitor && !['/', '/etablissements', '/rapport-rentree', '/rapport-sortie', '/rapports-annuels'].includes(currentPath)) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -245,7 +251,7 @@ export function Layout() {
     );
   }
 
-  if (isLocalActor && !(hasAnyRole(role, [ROLES.PROVISEUR]) && currentPath === '/admin') && !['/', '/etablissements', '/effectifs', '/communications', '/infrastructures', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/rapports-annuels'].includes(currentPath)) {
+  if (isLocalActor && !(hasAnyRole(role, [ROLES.PROVISEUR]) && currentPath === '/admin') && !['/', '/etablissements', '/effectifs', '/communications', '/infrastructures', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/rapport-rentree', '/rapport-sortie', '/rapports-annuels', '/rejets'].includes(currentPath)) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -266,7 +272,7 @@ export function Layout() {
     );
   }
 
-  if (isDgssAdmin && !['/', '/statistiques', '/etablissements', '/carte', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapports', '/rapports-annuels', '/admin'].includes(currentPath)) {
+  if (isDgssAdmin && !['/', '/statistiques', '/etablissements', '/carte', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapports', '/rapport-rentree', '/rapport-sortie', '/rapports-annuels', '/admin'].includes(currentPath)) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
         <div className="max-w-md w-full bg-white border border-gray-200 rounded-2xl p-6 text-center shadow-lg">
@@ -348,6 +354,32 @@ export function Layout() {
     );
   }
 
+  if (currentPath === '/file-attente' && !isDseAdmin) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
+        <div className="max-w-md w-full rounded-2xl border border-gray-200 bg-white p-6 text-center shadow-lg">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600"><ShieldAlert className="h-6 w-6" /></div>
+          <h2 className="text-lg font-bold text-gray-900">Accès réservé à la DSE</h2>
+          <p className="mt-2 text-sm text-gray-500">La vérification des transmissions est réservée au Directeur DSE.</p>
+          <Link to="/" className="mt-6 inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700">Retour au tableau de bord</Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentPath === '/rejets' && !isDseAdmin && !isLocalActor) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 p-8">
+        <div className="max-w-md w-full rounded-2xl border border-gray-200 bg-white p-6 text-center shadow-lg">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600"><ShieldAlert className="h-6 w-6" /></div>
+          <h2 className="text-lg font-bold text-gray-900">Accès réservé</h2>
+          <p className="mt-2 text-sm text-gray-500">La page Rejets est réservée aux agents d’établissement et au Directeur DSE.</p>
+          <Link to="/" className="mt-6 inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700">Retour au tableau de bord</Link>
+        </div>
+      </div>
+    );
+  }
+
   const SidebarContent = () => {
     // Determine user roles
     const userRole = user?.role;
@@ -360,30 +392,30 @@ export function Layout() {
     // Filter navigation based on role privileges
     const filteredNavigation = navigation.filter((item) => {
       if (isSuper) {
-        return ['/', '/statistiques', '/admin', '/audit', '/carte', '/rapports', '/rapports-annuels'].includes(item.href);
+        return ['/', '/statistiques', '/admin', '/audit', '/carte', '/rapports', '/rapport-rentree', '/rapport-sortie', '/rapports-annuels'].includes(item.href);
       }
       if (isDse) {
         return item.href !== '/audit';
       }
       if (isDgss) {
-        return ['/', '/statistiques', '/etablissements', '/carte', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapports', '/rapports-annuels', '/admin'].includes(item.href);
+        return ['/', '/statistiques', '/etablissements', '/carte', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapports', '/rapport-rentree', '/rapport-sortie', '/rapports-annuels', '/admin'].includes(item.href);
       }
       if (isLocal) {
         // Les responsables scolaires voient les modules de saisie de leur établissement.
-        return ['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapports-annuels'].includes(item.href) || (hasAnyRole(userRole, [ROLES.PROVISEUR]) && item.href === '/admin');
+        return ['/', '/etablissements', '/infrastructures', '/effectifs', '/mobilier', '/constructions', '/maintenance', '/wash', '/tice', '/communications', '/rapport-rentree', '/rapport-sortie', '/rapports-annuels', '/rejets'].includes(item.href) || (hasAnyRole(userRole, [ROLES.PROVISEUR]) && item.href === '/admin');
       }
       if (isVisitor) {
-        return ['/', '/etablissements', '/rapports-annuels'].includes(item.href);
+        return ['/', '/etablissements', '/rapport-rentree', '/rapport-sortie', '/rapports-annuels'].includes(item.href);
       }
       return false;
     });
 
     return (
       <>
-        <div className={`flex shrink-0 items-center border-b border-gray-100 justify-between ${isAdministrator ? 'h-24 px-3' : 'h-16 px-6'}`}>
+        <div className={`flex shrink-0 items-center border-b border-gray-100 justify-between ${isStaffLayout ? 'h-24 px-3' : 'h-16 px-6'}`}>
           <div className="flex min-w-0 items-center gap-3">
-            <img src={appLogo} alt="Logo SGSIS" className={`${isAdministrator ? 'h-16 w-16' : 'mr-3 h-9 w-9'} shrink-0 rounded-full object-contain`} />
-            {isAdministrator ? (
+            <img src={appLogo} alt="Logo SGSIS" className={`${isStaffLayout ? 'h-16 w-16' : 'mr-3 h-9 w-9'} shrink-0 rounded-full object-contain`} />
+            {isStaffLayout ? (
               <span className="min-w-0 text-[11px] font-semibold leading-tight text-slate-600">
                 <strong className="mb-1 block text-base font-black text-blue-950">SGSIS</strong>
                 Système de Gestion et de Suivi des Infrastructures Scolaires
@@ -429,7 +461,7 @@ export function Layout() {
             <button
               type="button"
               onClick={openProfile}
-              className={`flex w-full items-center rounded-xl text-left hover:bg-blue-50/60 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${isAdministrator ? 'md:hidden' : ''}`}
+              className={`flex w-full items-center rounded-xl text-left hover:bg-blue-50/60 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${isStaffLayout ? 'md:hidden' : ''}`}
               title="Ouvrir mon profil"
             >
               <div className="flex-shrink-0">
@@ -439,7 +471,7 @@ export function Layout() {
                   alt="Avatar" 
                 />
               </div>
-              <div className={`ml-3 min-w-0 truncate ${isAdministrator ? 'md:hidden' : ''}`}>
+              <div className={`ml-3 min-w-0 truncate ${isStaffLayout ? 'md:hidden' : ''}`}>
                 <p className="text-sm font-bold text-gray-900 truncate">
                   {user.prenom && user.nom ? `${user.prenom} ${user.nom}` : (user.displayName || user.email)}
                 </p>
@@ -448,11 +480,11 @@ export function Layout() {
                 )}
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Categorie : {getRoleCategory(user.role)}</p>
               </div>
-              {!isAdministrator && <UserCircle className="ml-auto h-4 w-4 flex-shrink-0 text-slate-400" />}
+              {!isStaffLayout && <UserCircle className="ml-auto h-4 w-4 flex-shrink-0 text-slate-400" />}
             </button>
 
             {/* Droit de contrôle auto-assigné */}
-            <div className={`bg-slate-50 border border-slate-100 p-2 rounded-lg ${isAdministrator ? 'md:hidden' : ''}`}>
+            <div className={`bg-slate-50 border border-slate-100 p-2 rounded-lg ${isStaffLayout ? 'md:hidden' : ''}`}>
               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Droit de contrôle</p>
               <p className="text-[10px] font-bold text-slate-700 leading-tight mt-0.5">
                 {user.rights || "lecture et recherche"}
@@ -460,7 +492,7 @@ export function Layout() {
             </div>
 
             {/* Jeton d'accès de session */}
-            {!isAdministrator && user.accessToken && (
+            {!isStaffLayout && user.accessToken && (
               <div className="bg-amber-50/50 border border-amber-100 p-2 rounded-lg flex items-center justify-between">
                 <div>
                   <p className="text-[8px] font-bold text-amber-600 uppercase tracking-widest">Mon Jeton Securisé</p>
@@ -475,7 +507,7 @@ export function Layout() {
 
           <button
             onClick={logout}
-            className={`mt-3 flex w-full items-center px-3 py-2 text-xs font-bold text-gray-700 rounded-md hover:bg-rose-50 hover:text-rose-600 transition-all border border-transparent hover:border-rose-100 ${isAdministrator ? 'md:hidden' : ''}`}
+            className={`mt-3 flex w-full items-center px-3 py-2 text-xs font-bold text-gray-700 rounded-md hover:bg-rose-50 hover:text-rose-600 transition-all border border-transparent hover:border-rose-100 ${isStaffLayout ? 'md:hidden' : ''}`}
           >
             <LogOut className="mr-2.5 h-4 w-4 text-gray-400 group-hover:text-rose-500" />
             Déconnexion
@@ -510,7 +542,7 @@ export function Layout() {
               SGSIS de la Commune de Ouagadougou
             </span>
           </div>
-          {isAdministrator && <div className="ml-auto mr-3 flex items-center gap-1 md:hidden">
+          {isStaffLayout && <div className="ml-auto mr-3 flex items-center gap-1 md:hidden">
             <button type="button" onClick={openProfile} className="flex items-center gap-1 rounded-lg p-2 text-blue-900 hover:bg-blue-50" title="Mon profil" aria-label="Mon profil"><UserCircle className="h-5 w-5" /><span className="max-w-20 truncate text-xs font-semibold">{user.prenom || user.displayName || user.email}</span></button>
             <button type="button" onClick={logout} className="rounded-lg p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700" title="Déconnexion" aria-label="Déconnexion"><LogOut className="h-5 w-5" /></button>
           </div>}
@@ -519,10 +551,10 @@ export function Layout() {
           </button>
         </div>
 
-        {isAdministrator && (
+        {isStaffLayout && (
           <header className="hidden md:flex h-[88px] shrink-0 items-center gap-6 border-b border-slate-200 bg-white px-6 xl:px-10">
             <Link to="/" className="inline-flex h-11 items-center gap-2 rounded-lg bg-sky-600 px-5 font-bold text-white shadow-sm transition hover:bg-sky-700"><Home className="h-4 w-4" />Retour</Link>
-            <form className="relative ml-auto hidden w-full max-w-md min-w-0 lg:block" onSubmit={(event) => { event.preventDefault(); const match = navigation.find((item) => item.name.toLowerCase().includes(adminModuleSearch.trim().toLowerCase())); if (match && adminModuleSearch.trim()) { navigate(match.href); setAdminModuleSearch(''); } }}>
+            <form className="relative ml-auto hidden w-full max-w-md min-w-0 lg:block" onSubmit={(event) => { event.preventDefault(); const allowedItems = isLocalActor ? navigation.filter((item) => LOCAL_AGENT_SEARCH_PATHS.includes(item.href) || (hasAnyRole(role, [ROLES.PROVISEUR]) && item.href === '/admin')) : navigation; const match = allowedItems.find((item) => item.name.toLowerCase().includes(adminModuleSearch.trim().toLowerCase())); if (match && adminModuleSearch.trim()) { navigate(match.href); setAdminModuleSearch(''); } }}>
               <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-blue-900" />
               <input value={adminModuleSearch} onChange={(event) => setAdminModuleSearch(event.target.value)} placeholder="Rechercher un module..." aria-label="Rechercher un module" className="h-11 w-full rounded-lg border border-slate-200 bg-white pl-12 pr-4 text-sm outline-none ring-blue-100 placeholder:text-slate-400 focus:border-blue-300 focus:ring-4" />
             </form>
@@ -545,7 +577,7 @@ export function Layout() {
 
         <main className="flex-1 overflow-y-auto focus:outline-none">
           <div className="py-6 px-4 sm:px-6 lg:px-8">
-            {!isAdministrator && <button
+            {!isStaffLayout && <button
               type="button"
               onClick={handleBack}
               className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"

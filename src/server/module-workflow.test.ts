@@ -7,8 +7,8 @@ test('module save and submit statuses follow the school review chain', () => {
   assert.equal(workflowStatusForSave({ role: ROLES.PROVISEUR }, 'save'), 'Brouillon');
   assert.equal(workflowStatusForSave({ role: ROLES.PROVISEUR }, 'submit'), 'Soumis au DSE');
   assert.equal(workflowStatusForSave({ role: ROLES.DIRECTEUR_ECOLE }, 'submit'), 'Soumis au DSE');
-  assert.equal(workflowStatusForSave({ role: ROLES.DIRECTEUR_DSE }, 'save'), 'Valide');
-  assert.equal(workflowStatusForSave({ role: ROLES.SUPER_ADMIN }, 'submit'), 'Valide');
+  assert.equal(workflowStatusForSave({ role: ROLES.DIRECTEUR_DSE }, 'save'), 'Brouillon');
+  assert.equal(workflowStatusForSave({ role: ROLES.SUPER_ADMIN }, 'submit'), 'Soumis au DSE');
 });
 
 test('module approvals advance sequentially and reject back to correction', () => {

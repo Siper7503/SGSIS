@@ -19,6 +19,7 @@ import { canCreateTargetRole, canManageScopedTarget } from "./src/lib/authorizat
 import type { PublicUser } from "./src/lib/shared-types.ts";
 import { createFacilitiesRouter } from "./src/server/routes/facilities.ts";
 import { createAnnualReportsRouter } from "./src/server/routes/annual-reports.ts";
+import { createReviewQueueRouter } from "./src/server/routes/review-queue.ts";
 import { attachModuleWorkflow, saveModuleWorkflow, isSchoolDataWriter } from "./src/server/module-workflow.ts";
 import { DEFAULT_SCHOOL_YEAR, isValidSchoolYear } from "./src/lib/schoolYears.ts";
 
@@ -308,10 +309,12 @@ async function ensureDatabaseShape() {
       created_at timestamp default now(),
       updated_at timestamp default now(),
       submitted_at timestamp,
+      commentaire_rejet text,
       validated_at timestamp
     )
   `);
   await db.execute(sql`alter table annual_reports add column if not exists type_rapport text not null default 'entree'`);
+  await db.execute(sql`alter table annual_reports add column if not exists commentaire_rejet text`);
   await db.execute(sql`
     create table if not exists module_submissions (
       id serial primary key,
@@ -1768,10 +1771,39 @@ async function startServer() {
   });
 
   app.put("/api/etablissements/:id", requireAuth, async (req: AuthRequest, res) => {
-    if (!requireAnyRole(req, res, DSE_ROLES, "Accès refusé : la gestion des établissements est réservée au Directeur DSE.")) return;
+    if (!requireAnyRole(req, res, [...DSE_ROLES, ...LOCAL_SCHOOL_ROLES], "Accès refusé : rôle non autorisé.")) return;
     try {
       const { nom, type, arrondissement, statut, nomDirecteur, coordonnees, archived, force } = req.body;
       const id = parseInt(req.params.id);
+
+      if (hasAnyRole(req.user?.role, LOCAL_SCHOOL_ROLES)) {
+        if (Number(req.user?.etablissementId) !== id) {
+          res.status(403).json({ error: "Vous ne pouvez modifier que la fiche de votre propre établissement." });
+          return;
+        }
+        if (typeof nomDirecteur !== 'string' && typeof coordonnees !== 'string') {
+          res.status(400).json({ error: "Renseignez le nom du responsable ou les coordonnées de l'établissement." });
+          return;
+        }
+        if (coordonnees && !/^-?\d+(\.\d+)?,\s*-?\d+(\.\d+)?$/.test(String(coordonnees).trim())) {
+          res.status(400).json({ error: "Format des coordonnées géographiques invalide." });
+          return;
+        }
+        const updated = await db.update(etablissements).set({
+          nomDirecteur: typeof nomDirecteur === 'string' ? nomDirecteur.trim() || null : undefined,
+          coordonnees: typeof coordonnees === 'string' ? coordonnees.trim() || null : undefined
+        }).where(eq(etablissements.id, id)).returning();
+        if (updated.length === 0) {
+          res.status(404).json({ error: "Établissement non trouvé." });
+          return;
+        }
+        await logAudit(req.user?.id || null, "MISE_A_JOUR_FICHE_ETABLISSEMENT", "etablissements", id, {
+          nomDirecteur: updated[0].nomDirecteur,
+          coordonnees: updated[0].coordonnees
+        });
+        res.json({ success: true, message: "La fiche de votre établissement a été mise à jour.", etablissement: updated[0] });
+        return;
+      }
 
       // 1. Validation des champs obligatoires et format
       if (!nom || !nom.trim()) {
@@ -3019,6 +3051,8 @@ async function startServer() {
   };
 
   app.use(createAnnualReportsRouter(logAudit));
+
+  app.use(createReviewQueueRouter());
 
   app.use(createFacilitiesRouter(logAudit));
 
